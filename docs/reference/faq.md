@@ -32,6 +32,10 @@ Preflight compares every text, inside panels too, with the style's minimum (`Sty
 Remove `fontsize=` from the panel's code so the style's size applies, or make the panel larger: it redraws with text
 at the same point size. Superscripts and subscripts don't count.
 
+On a poster, a figure placed whole scales its text with it: a 7 pt figure placed at twice its size prints at 14 pt,
+which is small for a poster. Place it larger, or draw it with a style with larger text,
+`fig.figure("fig2.py", ..., style=Style(size=10))`; its panels then redraw with that text before being scaled.
+
 ## EPS export, CMYK or outlines don't work
 
 These use Ghostscript: `brew install ghostscript`.

@@ -11,9 +11,10 @@ hide:
 # Fignimble
 </div>
 
-An editor for multi-panel scientific figures, the part of Illustrator scientists actually use, with Python underneath
-everything. Arrange panels with the mouse, write them in matplotlib, or ask an AI coding agent to build them, all in
-the same figure.
+An editor for multi-panel scientific figures and conference posters, the part of Illustrator scientists actually
+use, with Python underneath everything. Arrange panels with the mouse, write them in matplotlib, or ask an AI coding
+agent to build them, all in the same figure. Then put the paper's figures on a poster that stays up to date with
+their code.
 { .fg-lead }
 
 <div class="fg-buttons" markdown>
@@ -38,7 +39,9 @@ widths stay true. Panel letters are added automatically and kept in reading orde
 of every panel, and a journal preset sets the widths, label style and resolution the journal asks for. Before you
 export, a preflight check finds small text, low-resolution pictures and colors color-blind readers can't tell
 apart. A figure can be placed whole in another, which makes [posters](guide/posters.md) built from the paper's own
-figures, kept up to date by their code. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
+figures, kept up to date by their code: templates for the usual conference sizes, text boxes with bullets and
+headings, QR codes, and PDFs with bleed and crop marks for the print shop. Every exported file records the code and
+data it was made from. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
 and have the agent write panels while you watch the figure update. When the data are on a Linux server, Fignimble
 can [open the project there](guide/remote.md): the server draws the panels and the Mac shows them.
 
@@ -79,6 +82,24 @@ can [open the project there](guide/remote.md): the server draws the panels and t
     PDF, EPS, SVG, TIFF, PNG, JPEG or PowerPoint that meet the journal's rules, and tables as Word or Excel.
 
     [:octicons-arrow-right-24: Preflight and export](guide/export.md)
+
+-   :material-presentation:{ .lg .middle } **Posters from the paper's figures**
+
+    ---
+
+    Templates for A0, 48 × 36 in and the other usual conference sizes. Place the paper's figures whole, drawn from
+    their code; write the text in Markdown; add a QR code; export with bleed and crop marks, or as PowerPoint.
+
+    [:octicons-arrow-right-24: Posters](guide/posters.md)
+
+-   :material-source-commit:{ .lg .middle } **Every file knows where it came from**
+
+    ---
+
+    Exported PDFs, PNGs, TIFFs and SVGs record the git commit and a fingerprint of every file they were made from.
+    `fignimble provenance` tells you whether a figure still matches its code and data.
+
+    [:octicons-arrow-right-24: Provenance](guide/export.md#provenance)
 
 </div>
 

@@ -2,11 +2,12 @@
 
 [![Downloads](https://img.shields.io/github/downloads/pachterlab/Fignimble/total?label=Downloads)](https://github.com/pachterlab/Fignimble/releases)
 
-Fignimble assembles multi-panel figures for publication, the part of Illustrator scientists actually use, with Python
+Fignimble assembles multi-panel figures for publication, and conference posters, the part of Illustrator scientists actually use, with Python
 underneath everything. Each figure is a short Python file that places panels, pictures, text and arrows; each panel
 is drawn by matplotlib code. You edit a figure on the canvas (drag, resize, align, retype), in the code pane, or by
 asking a coding agent (Claude Code, Codex, Gemini CLI) in Fignimble's terminal. All three change the same files, and
-Fignimble re-renders as they change.
+Fignimble re-renders as they change. A poster is a figure too: it places the paper's figures whole, drawn from
+their code, so it changes when they do.
 
 **User guide: [pachterlab.github.io/Fignimble](https://pachterlab.github.io/Fignimble/)**
 

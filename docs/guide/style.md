@@ -54,6 +54,10 @@ Press, PLOS, Oxford, BMC, Genome Research, Molecular Systems Biology, eLife, Fro
 PNAS. See [journal presets](../reference/journals.md), and check the journal's current guidelines before
 submitting.
 
+For a poster, `Style.poster("a0")` sets type sizes meant to be read from a meter or two (28 pt text on A0, 22 pt on
+A1), the smallest text preflight accepts, thicker lines and a margin; `Figure(poster="a0")` uses it. See
+[poster sizes](posters.md#making-a-poster).
+
 ## Units and sizes
 
 Figure and element sizes are in millimeters; text sizes in points. Nature's double column is 183 mm; a single column

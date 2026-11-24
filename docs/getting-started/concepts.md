@@ -51,6 +51,13 @@ edits; it leaves alone lines someone else has changed since, so it never throws 
 `Labels` sets the panel letters: case, format (`a`, `(a)`, `A.`), size, weight and offset. `Style.journal("nature")`
 sets both from a [journal preset](../reference/journals.md). Change `style.py` and every figure follows.
 
+## Figures inside figures, and posters
+
+A figure file can be placed whole in another with `fig.figure("fig2.py", x=..., y=..., w=...)`. It is drawn from its
+own file each time, with its panels, letters and annotations, scaled to the size you give it. A poster is a figure
+made this way: `Figure(poster="a0")` sets a poster's page and type sizes, and the paper's figures are placed on it.
+See [posters](../guide/posters.md).
+
 ## Renders are cached
 
 Fignimble keeps each panel's drawing in `.fignimble/` and draws a panel again only when its code, its data, its size
