@@ -23,6 +23,10 @@ none of its own, and removes them when the project closes. They tell the agent:
 - to leave alone the `texts=`, `colors=`, `locked=` and `hidden=` settings you made on the canvas;
 - how to look at its own work.
 
+An agent can make a poster as well: ask it to "make an A0 poster from fig1 and fig2 with the abstract in
+intro.md". It is told to place figures whole (`fig.figure(...)`) rather than copy their panels, so the poster keeps
+up with the paper.
+
 ## Letting the agent see the figure
 
 ```bash

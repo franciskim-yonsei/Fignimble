@@ -1,4 +1,5 @@
-"""PowerPoint: a figure as a picture on a 16:9 slide (.pptx), written without python-pptx.
+"""PowerPoint: a figure as a picture on a 16:9 slide (.pptx), or a poster on a slide its own size, written without
+python-pptx.
 
 The picture is a PNG at the export's resolution, with the same figure as SVG alongside, which PowerPoint 2019 and
 365 show instead (so it stays sharp when scaled); Keynote and Google Slides use the PNG. The figure is placed at its
@@ -79,26 +80,40 @@ def _theme() -> str:
             f'<a:bgFillStyleLst>{fill * 3}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>')
 
 
-def _presentation() -> str:
+MAX_SLIDE = 51206400                          # 56 in: PowerPoint's largest slide side
+MIN_SLIDE = 914400                            # 1 in
+
+
+def _presentation(sw: int = SLIDE_W, sh: int = SLIDE_H) -> str:
     return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<p:presentation {_NS} saveSubsetFonts="1">'
             '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>'
             '<p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>'
-            f'<p:sldSz cx="{SLIDE_W}" cy="{SLIDE_H}"/><p:notesSz cx="6858000" cy="9144000"/>'
+            f'<p:sldSz cx="{sw}" cy="{sh}"/><p:notesSz cx="6858000" cy="9144000"/>'
             '<p:defaultTextStyle/></p:presentation>')
 
 
-def place(width_mm: float, height_mm: float) -> tuple[int, int, int, int]:
+def slide_size(width_mm: float, height_mm: float) -> tuple[int, int]:
+    """A slide the size of a poster (EMU), scaled down to PowerPoint's largest (56 in a side) when it is larger."""
+    w, h = width_mm * EMU_PER_MM, height_mm * EMU_PER_MM
+    k = min(1.0, MAX_SLIDE / w, MAX_SLIDE / h)
+    return max(MIN_SLIDE, int(w * k)), max(MIN_SLIDE, int(h * k))
+
+
+def place(width_mm: float, height_mm: float, sw: int = SLIDE_W, sh: int = SLIDE_H,
+          margin: int = MARGIN) -> tuple[int, int, int, int]:
     """Where the figure goes on the slide (EMU): real size when it fits inside the margins, else scaled to fit."""
     w, h = width_mm * EMU_PER_MM, height_mm * EMU_PER_MM
-    k = min(1.0, (SLIDE_W - 2 * MARGIN) / w, (SLIDE_H - 2 * MARGIN) / h)
+    k = min(1.0, (sw - 2 * margin) / w, (sh - 2 * margin) / h)
     w, h = int(w * k), int(h * k)
-    return (SLIDE_W - w) // 2, (SLIDE_H - h) // 2, w, h
+    return (sw - w) // 2, (sh - h) // 2, w, h
 
 
 def write_pptx(path: str | Path, png: bytes, width_mm: float, height_mm: float, svg: str | None = None,
-               title: str = "Figure", alt: str | None = None) -> str:
-    """Write a one-slide presentation holding the figure (PNG, and SVG when given)."""
-    x, y, w, h = place(width_mm, height_mm)
+               title: str = "Figure", alt: str | None = None, slide: tuple | None = None) -> str:
+    """Write a one-slide presentation holding the figure (PNG, and SVG when given). `slide` (w, h mm): a slide
+    of that size, the figure filling it (a poster, which conferences often want as PowerPoint), instead of 16:9."""
+    sw, sh = slide_size(*slide) if slide else (SLIDE_W, SLIDE_H)
+    x, y, w, h = place(width_mm, height_mm, sw, sh, 0 if slide else MARGIN)
     ext = ""
     if svg is not None:
         ext = ('<a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">'
@@ -128,7 +143,7 @@ def write_pptx(path: str | Path, png: bytes, width_mm: float, height_mm: float, 
         z.writestr("_rels/.rels", _rels(("rId1", f"{_REL}/officeDocument", "ppt/presentation.xml"),
                                         ("rId2", f"{_PKG}/metadata/core-properties", "docProps/core.xml")))
         z.writestr("docProps/core.xml", core)
-        z.writestr("ppt/presentation.xml", _presentation())
+        z.writestr("ppt/presentation.xml", _presentation(sw, sh))
         z.writestr("ppt/_rels/presentation.xml.rels", _rels(
             ("rId1", f"{_REL}/slideMaster", "slideMasters/slideMaster1.xml"),
             ("rId2", f"{_REL}/slide", "slides/slide1.xml"),

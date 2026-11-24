@@ -145,6 +145,25 @@ it; Export has a *Dark version* box; `fignimble export fig1.py fig1-dark.pdf --d
 sets itself stay as they are; `is_dark()` lets panel code choose (`ecolor="white" if is_dark() else "black"`).
 The app itself follows the system's light or dark appearance, or **View ▸ Appearance** chooses one.
 
+## Posters, and figures inside figures
+
+`fig.figure("fig2.py", x=20, y=130, w=360)` places another figure of the project whole, drawn from its code every
+time and scaled with its text and lines (Insert ▸ Figure…, or drop the figure file on the canvas). A poster is a figure
+built that way from the paper's own figures, so it keeps up with them:
+
+```python
+fig = Figure(poster="a1")                          # or a0, 48x36, 72x48, 24x36, b1, ...; landscape=True
+fig.text(source="intro.md", x=20, y=135, width=170, height=480, fit="shrink")   # Markdown: headings, bullets
+fig.figure("fig1.py", x=206, y=135, w=368)
+fig.qr("https://github.com/pachterlab/Fignimble", x=504, y=756, w=70)
+```
+
+`Style.poster` sets type sizes for reading from a meter or two, and preflight checks text at the size it prints, inside
+placed figures too, and keeps the margin along the edges clear. Export a PDF with a bleed and crop marks
+(`--bleed 3 --crop-marks`), or PowerPoint on a slide the poster's size. Every export records the git commit and a
+fingerprint of each file it was made from; `fignimble provenance poster.pdf` checks them against the project. See
+[Posters](https://pachterlab.github.io/Fignimble/guide/posters/).
+
 ## What Fignimble does that Illustrator doesn't
 
 - **Panel labels are automatic and consistent.** Panels are lettered in reading order (a, b, c… or A, B, C…,
@@ -250,6 +269,7 @@ engine/fignimble/   api.py       the figure language (Figure, Labels, Style)
                  layout.py    patchwork-style layouts: rows, columns, grids and designs as grids of tracks
                  render.py    runs figure and panel code, lines up plot areas, collects legends, composes with
                               PyMuPDF, sprites, preflight, export, dark versions
+                 qr.py        QR codes (ISO/IEC 18004), without a package
                  srcedit.py   canvas edits -> minimal source patches through Python's syntax tree
                  core.py      session: render worker, edit operations, undo, watching the project
                  rpc.py       JSON lines over stdio for the app (docs/protocol.md)

@@ -160,6 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu("Insert", [item("New Panel from Code…", #selector(MainController.newPanel(_:)), "p", [.command, .shift]),
                         item("Panel from Existing Code…", #selector(MainController.insertPanelCode(_:))),
                         item("Picture…", #selector(MainController.insertImage(_:)), "i", [.command, .shift]),
+                        item("Figure…", #selector(MainController.insertFigure(_:))),
+                        item("QR Code…", #selector(MainController.insertQR(_:))),
                         item("BioCartoon Icons…", #selector(MainController.showBioCartoon(_:)), "b", [.command, .shift]),
                         item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
                         item("Table from CSV…", #selector(MainController.insertTable(_:))),

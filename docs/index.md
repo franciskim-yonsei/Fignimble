@@ -37,7 +37,8 @@ Because the figure is code, it can do what a drawing can't. Panels redraw at the
 widths stay true. Panel letters are added automatically and kept in reading order. One style sets the font and sizes
 of every panel, and a journal preset sets the widths, label style and resolution the journal asks for. Before you
 export, a preflight check finds small text, low-resolution pictures and colors color-blind readers can't tell
-apart. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
+apart. A figure can be placed whole in another, which makes [posters](guide/posters.md) built from the paper's own
+figures, kept up to date by their code. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
 and have the agent write panels while you watch the figure update. When the data are on a Linux server, Fignimble
 can [open the project there](guide/remote.md): the server draws the panels and the Mac shows them.
 
@@ -88,7 +89,8 @@ can [open the project there](guide/remote.md): the server draws the panels and t
 2. Follow the [quick start](getting-started/quick-start.md) to make a figure with two panels, letter it, style it
    for a journal and export it.
 3. Read [key concepts](getting-started/concepts.md) to see how figures, panels and the canvas fit together.
-4. See [a 37-panel Nature figure rebuilt](examples/nature-rebuild.md) from its authors' code and data.
+4. See [a 37-panel Nature figure rebuilt](examples/nature-rebuild.md) from its authors' code and data, or
+   [make a poster](guide/posters.md) from a paper's figures.
 
 Fignimble is free and open source, from the [Pachter Lab](https://pachterlab.github.io) at Caltech. It is built on
 [Manimble](https://pachterlab.github.io/Manimble/), the slide editor for Manim presentations, and shares its engine

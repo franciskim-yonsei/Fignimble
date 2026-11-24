@@ -1,6 +1,7 @@
 # Journal presets
 
 `Style.journal("<preset>")` and `Labels.journal("<preset>")` take the names below; `fignimble journals` lists them.
+Posters have presets of their own: see [poster sizes](../guide/posters.md#making-a-poster).
 Widths are in millimeters. The resolutions are the least a journal asks for, as printed: for photographs alone, for
 pictures combined with text or line art, and for line art alone; export never goes below them.
 

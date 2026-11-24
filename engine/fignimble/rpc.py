@@ -105,6 +105,12 @@ def main():
         # in their order (by publisher), which a JSON object doesn't keep for the app
         "journals": lambda a: {k: {**j, "rank": i} for i, (k, j) in
                                enumerate(__import__("fignimble.journals", fromlist=["JOURNALS"]).JOURNALS.items())},
+        "posters": lambda a: {k: {**p, "size": list(p["size"]), "rank": i} for i, (k, p) in
+                              enumerate(__import__("fignimble.journals", fromlist=["POSTERS"]).POSTERS.items())},
+        # in the order offered, with their sizes as hung
+        "poster_templates": lambda a: {"templates": [
+            {**t, "size": list(__import__("fignimble.journals", fromlist=["poster_size"]).poster_size(t["poster"], t["landscape"]))}
+            for t in __import__("fignimble.journals", fromlist=["POSTER_TEMPLATES"]).POSTER_TEMPLATES]},
     }
     if far:
         handlers.update({

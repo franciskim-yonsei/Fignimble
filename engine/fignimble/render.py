@@ -37,7 +37,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.figure import Figure as MplFigure  # noqa: E402
 
 import matplotlib.lines  # noqa: E402
-from . import api, journals, layout, tables  # noqa: E402
+from . import api, journals, layout, qr, tables  # noqa: E402
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 sys.dont_write_bytecode = True          # running a project's code leaves no __pycache__ in it
@@ -45,11 +45,14 @@ pymupdf.TOOLS.mupdf_display_errors(False)
 
 MM = 72 / 25.4                     # points per millimeter
 RASTER = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp")
+CROP_SLUG = 10.0                   # mm outside the bleed for crop marks
 VECTOR = (".pdf", ".svg")
 SKIP_DIRS = {".fignimble", ".git", "__pycache__", ".venv", "venv", "node_modules", ".ipynb_checkpoints"}
 
 
-CACHE_VERSION = 8                  # bump when a change to drawing makes cached pieces wrong
+CACHE_VERSION = 9                  # bump when a change to drawing makes cached pieces wrong
+MAX_SPRITE_PX = 24e6               # pixels of the editor's picture of one piece, at most
+MAX_SPRITE_SIDE = 12000
 
 
 def _h(*parts) -> str:
@@ -65,6 +68,35 @@ def rgb(c):
 def is_figure_source(text: str) -> bool:
     """A .py file that makes a figure (and is not a panel or a style module)."""
     return "fignimble" in text and "Figure(" in text
+
+
+def run_isolated(path: Path) -> api.Figure:
+    """Run a figure file while another figure is being drawn (one placed in it with fig.figure): the Figure it
+    makes, without disturbing the list of figures the outer run is collecting."""
+    saved = list(api._FIGURES)
+    api._FIGURES.clear()
+    try:
+        runpy.run_path(str(path), run_name="__fignimble__")
+        if not api._FIGURES:
+            raise RuntimeError(f"{path.name} does not make a Figure")
+        return api._FIGURES[0]
+    finally:
+        api._FIGURES[:] = saved
+
+
+_SIZES: dict = {}
+
+
+def nested_size(source: str) -> tuple[float, float]:
+    """(width, height) mm of a figure file (relative to the project, where figure code runs), for the geometry of
+    fig.figure(...) without w or h."""
+    path = Path(source).resolve()
+    st = path.stat()
+    k = (str(path), st.st_mtime_ns, st.st_size)
+    if k not in _SIZES:
+        f = run_isolated(path)
+        _SIZES[k] = (float(f.width), float(f.height))
+    return _SIZES[k]
 
 
 def image_aspect(source: str, crop=None, rotation: float = 0) -> float:
@@ -112,6 +144,8 @@ class Renderer:
         self._cwd = Path.cwd()                   # rendering moves into the project; relative paths mean this one
         self.dark = False
         self.raster_dpi = 600                    # what panels draw their rasters at (imshow, rasterized scatters)
+        self._stack: list[Path] = []             # the figure files being drawn, outermost first (fig.figure nests)
+        self.used: set[Path] = set()             # the files the last render read, for an export's provenance
 
     # --- running user code ---
 
@@ -438,6 +472,117 @@ class Renderer:
         r = self._doc(str(out))[0].rect
         return str(out), r.width / MM, r.height / MM
 
+    def flow_piece(self, text: str, markdown: bool, size: float, weight: str, style: str, color: str, family: list,
+                   align: str, width: float, opacity: float = 1.0, height: float | None = None, fit: str | None = None,
+                   min_size: float | None = None) -> tuple[str, float, float, float]:
+        """(pdf, w mm, h mm, size used) of a text box laid out in blocks: paragraphs, bullets and numbered items
+        with their lines indented under them, headings. With `height` and fit="shrink", the type is made smaller
+        (in quarter points, never below `min_size`) until the text fits the height."""
+        color = self.c(color)
+        key = _h("flow", text, markdown, size, weight, style, color, family, align, width, opacity, height, fit,
+                 min_size)
+        out = self.cache / "pieces" / f"{key}.pdf"
+        meta = out.with_suffix(".json")
+        if not (out.exists() and meta.exists()):
+            rc = {"pdf.fonttype": 42, "font.family": "sans-serif", "font.sans-serif": family, **_math_rc(family)}
+            with matplotlib.rc_context(rc):
+                fig = MplFigure(figsize=(max(width, 1) / 25.4, 2))
+                FigureCanvasAgg(fig)
+                blocks = _blocks(text, markdown)
+                props = dict(fontsize=size, fontweight=weight, fontstyle=style)
+
+                def lay(s_):
+                    return _flow(blocks, s_, weight == "bold", width, fig, {**props, "fontsize": s_})
+
+                def tall(lines) -> float:                   # mm
+                    return (lines[-1]["y"] + lines[-1]["size"] * 0.25) / MM if lines else 0.0
+
+                used = size
+                lines = lay(used)
+                if height and fit == "shrink" and tall(lines) > height:
+                    lo, hi = max(min(min_size or 1.0, size), 1.0), size
+                    if tall(lay(lo)) <= height:
+                        for _ in range(10):
+                            mid = (lo + hi) / 2
+                            lo, hi = (mid, hi) if tall(lay(mid)) <= height else (lo, mid)
+                    used = max(math.floor(lo * 4) / 4, min(min_size or 1.0, size))
+                    lines = lay(used)
+                H = max(tall(lines) * MM, 1.0)                 # points
+                fig.set_size_inches(max(width, 1) / 25.4, H / 72)
+                for ln in lines:
+                    kw = dict(fontsize=ln["size"], fontweight="bold" if ln["bold"] else weight, fontstyle=style,
+                              color=color, alpha=opacity, va="baseline", transform=fig.dpi_scale_trans)
+                    x = {"center": (ln["x"] + width) / 2, "right": width}.get(align, ln["x"])
+                    fig.text(x / 25.4, (H - ln["y"]) / 72, ln["text"], ha=align if align in ("center", "right") else "left",
+                             **kw)
+                    if ln["marker"]:
+                        fig.text(ln["mx"] / 25.4, (H - ln["y"]) / 72, ln["marker"], ha="left", **kw)
+                buf = io.BytesIO()
+                fig.savefig(buf, format="pdf", bbox_inches="tight", pad_inches=0, transparent=True)
+            _write(out, buf.getvalue())
+            meta.write_text(json.dumps({"size": used}))
+        r = self._doc(str(out))[0].rect
+        return str(out), r.width / MM, r.height / MM, json.loads(meta.read_text())["size"]
+
+    def figure_piece(self, e, oid: str) -> tuple[Piece, dict]:
+        """Another figure of the project drawn whole (fig.figure): run, drawn and composed as it would be on its
+        own, then placed as one vector picture, scaled to its box. Its errors and color warnings come with it."""
+        p = e.props
+        path = (self.project / p["source"]).resolve()
+        if not str(path).startswith(str(self.project) + os.sep):
+            raise ValueError(f"{p['source']} is outside the project; a figure placed in a figure is one of its own")
+        if not path.exists():
+            raise FileNotFoundError(f"no figure file {p['source']}")
+        if path in self._stack:
+            raise ValueError(f"{path.name} can't be placed in itself")
+        self.used.add(path)
+        sub = run_isolated(path)
+        if getattr(e, "substyle", None) is not None:
+            sub.style = e.substyle
+            sub.labels = e.substyle.labels
+        if p.get("background", "figure") != "figure":
+            sub.props["background"] = p["background"]
+        outer = api._STYLE[0]
+        self._stack.append(path)
+        try:
+            sp, sinfos, slabels = self.pieces(sub)
+            said = self.preflight(sub, sp, sinfos, slabels)
+        finally:
+            self._stack.pop()
+            api._STYLE[0] = outer
+        if not p.get("letters", True):
+            # drawn without its letters; its warnings still name its panels by them
+            sp = [pc for pc in sp if pc.kind != "label"]
+        W, H = float(sub.width), float(sub.height)
+        key = _h("figure", W, H, self.c(sub.props["background"]), [(pc.key, [round(v, 4) for v in pc.box]) for pc in sp])
+        out = self.cache / "pieces" / f"{key}.pdf"
+        if not out.exists():
+            doc = self.compose(sub, sp)
+            tmp = out.with_suffix(".tmp")
+            doc.save(str(tmp), garbage=3, deflate=True)
+            tmp.replace(out)
+        w, h = p["w"], p["h"]
+        if w is None and h is None:
+            w, h = W, H
+        elif w is None:
+            w = h * W / H
+        elif h is None:
+            h = w * H / W
+        box = (p["x"], p["y"], w, h)
+        dest = _contain(W / H, w, h) if p["w"] is not None and p["h"] is not None else (0, 0, w, h)
+
+        def draw(page, ox, oy, dest=dest):
+            page.show_pdf_page(pymupdf.Rect(ox + dest[0] * MM, oy + dest[1] * MM, ox + (dest[0] + dest[2]) * MM,
+                                            oy + (dest[1] + dest[3]) * MM), self._doc(str(out)), 0, keep_proportion=False)
+        # what comes along from inside: what failed, and colors that clash (sizes are checked here, as printed)
+        nested = [w_ for w_ in said if w_["level"] == "error" or w_.get("colors")]
+        meta = {"pdf": str(out), "scale": dest[2] / W, "vector": True, "dest": dest, "nested": nested,
+                "source": str(path)}
+        info = {"code": {"file": str(path), "line": 1}, "natural": [W, H], "dest": [round(v, 4) for v in dest],
+                "figure": path.stem if path.parent == self.project else None,
+                "scale": round(dest[2] / W, 4)}
+        return Piece(oid, "figure", box, _h("fig", str(out), dest), draw, meta=meta), info
+
     def _raster(self, src: Path, crop, opacity: float, aspect_box: float | None, rotation: float = 0,
                 flip: str | None = None) -> tuple[str, int, int]:
         """A PNG of a raster picture cropped, mirrored and turned (and cut to `aspect_box` for "cover"):
@@ -622,6 +767,7 @@ class Renderer:
                     panel_job(oid, p, box, style.align_axes, False)
                     panels.append((p, oid, box))
                 elif e.kind == "image":
+                    self.used.add((self.project / p["source"]).resolve())
                     box = self.image_box(p)
                     pc = picture(e, self.image_piece(p, box, oid, p["fit"] if p["h"] is not None else "stretch"))
                     steps.append(pc)
@@ -655,14 +801,32 @@ class Renderer:
                 elif e.kind == "text":
                     size = p["size"] or style.size
                     fam = [p["font"]] + family if p["font"] else family
-                    pdf, w, h = self.text_piece(p["text"], size, p["weight"], p["style"], p["color"], p["rotation"],
-                                                fam, p["align"], p.get("width"), opacity=p.get("opacity", 1.0))
+                    text, markdown = p["text"], False
+                    if p.get("source"):                      # the text of a file (Markdown)
+                        src = (self.project / p["source"]).resolve()
+                        self.used.add(src)
+                        text, markdown = src.read_text(encoding="utf-8").rstrip(), True
+                        info["code"] = {"file": str(src), "line": 1}
+                    if p.get("width") and not p["rotation"] and (markdown or p.get("height") or is_flowing(text)):
+                        pdf, w, h, used = self.flow_piece(text, markdown, size, p["weight"], p["style"], p["color"],
+                                                          fam, p["align"], p["width"], p.get("opacity", 1.0),
+                                                          p.get("height"), p.get("fit"), style.min_font)
+                        if p.get("height") and h > p["height"] + 0.05:
+                            info["overflow"] = round(h - p["height"], 1)
+                        if used != size:
+                            info["shrunk"] = used
+                        size = used
+                    else:
+                        pdf, w, h = self.text_piece(text, size, p["weight"], p["style"], p["color"], p["rotation"],
+                                                    fam, p["align"], p.get("width"), opacity=p.get("opacity", 1.0))
                     x0 = p["x"] - {"left": 0, "center": w / 2, "right": w}.get(p["align"], 0)
                     box = (x0, p["y"], w, h)
                     steps.append(_pdf_piece(self, oid, "text", box, pdf, meta={"pdf": pdf, "scale": 1.0, "size": size}))
                 elif e.kind == "table":
                     size = p["size"] or style.size
                     fam = [p["font"]] + family if p["font"] else family
+                    if p.get("rows") is None:
+                        self.used.add(self.resolve(p["source"]))
                     rows = p["rows"] if p.get("rows") is not None else tables.read_rows(self.resolve(p["source"]))
                     pdf, w, h = self.table_piece(rows, p["header"], size, fam, p["color"], p.get("w"),
                                                  p.get("decimals"), p.get("align"), p.get("grid", False))
@@ -683,6 +847,18 @@ class Renderer:
                 elif e.kind == "path":
                     pc = _path_piece(oid, e, self.c)
                     box = pc.box
+                    steps.append(pc)
+                elif e.kind == "figure":
+                    pc, more = self.figure_piece(e, oid)
+                    box = pc.box
+                    info.update(more)
+                    steps.append(pc)
+                    if p.get("label") is not None:           # lettered as a panel of this figure
+                        panels.append((p, oid, box))
+                elif e.kind == "qr":
+                    pc = _qr_piece(oid, p)
+                    box = pc.box
+                    info["module"] = round(pc.meta["module"], 3)
                     steps.append(pc)
                 elif e.kind == "zoom":
                     zooms.append((len(steps), e, info))
@@ -714,7 +890,7 @@ class Renderer:
                 info["error"] = f"{type(exc).__name__}: {exc}"
                 steps.append(_error_piece(oid, box, info["error"]))
                 # it keeps its letter, so one broken picture doesn't reletter every panel after it
-                if (e.kind == "image" or (e.kind == "rect" and p.get("label") is not None)) \
+                if (e.kind == "image" or (e.kind in ("rect", "figure") and p.get("label") is not None)) \
                         and not any(o == oid for _, o, _ in panels):
                     panels.append((p, oid, box))
             boxes[id(e)] = box
@@ -739,6 +915,8 @@ class Renderer:
                 info["error"] = f"{type(exc).__name__}: {exc}"
         jobs = [s_ for s_ in steps if isinstance(s_, dict)]
         for j in jobs:
+            if not callable(j["props"]["source"]):
+                self.used.add((self.project / j["props"]["source"]).resolve())
             _, _, w, h = j["box"]
             if round(j["props"].get("rotation") or 0) % 180 == 90:
                 w, h = h, w                             # drawn upright, then turned into its box
@@ -827,6 +1005,7 @@ class Renderer:
                 info["code"] = code_info(leaf.props)
                 panel_job(oid, leaf.props, lb, style.align_axes and p["align"], p["guides"] == "collect")
             else:
+                self.used.add((self.project / leaf.props["source"]).resolve())
                 pc = self.image_piece(leaf.props, lb, oid, leaf.props["fit"])
                 d = pc.meta.get("dest") or (0, 0, lb[2], lb[3])
                 dests[id(leaf)] = (lb[0] + d[0], lb[1] + d[1], d[2], d[3])
@@ -964,14 +1143,40 @@ class Renderer:
                           "box": [round(v, 4) for v in lb]})
         return pieces, infos
 
-    def compose(self, fig: api.Figure, pieces: list[Piece]) -> pymupdf.Document:
+    def compose(self, fig: api.Figure, pieces: list[Piece], bleed: float = 0.0, marks: bool = False) -> pymupdf.Document:
+        """The figure as a one-page PDF. `bleed` (mm) extends the page past each edge (the background, and
+        whatever reaches past the edge, prints there so trimming leaves no white line); `marks` adds crop marks
+        outside it. The page's TrimBox is then the figure and its BleedBox the bleed."""
+        slug = CROP_SLUG if marks else 0.0
+        o = (bleed + slug) * MM
         doc = pymupdf.open()
-        page = doc.new_page(width=fig.width * MM, height=fig.height * MM)
+        page = doc.new_page(width=fig.width * MM + 2 * o, height=fig.height * MM + 2 * o)
         bg = self.c(fig.props["background"])
         if bg:
-            page.draw_rect(page.rect, color=None, fill=rgb(bg), width=0)
+            page.draw_rect(pymupdf.Rect(slug * MM, slug * MM, page.rect.width - slug * MM,
+                                        page.rect.height - slug * MM), color=None, fill=rgb(bg), width=0)
         for pc in pieces:
-            pc.draw(page, pc.box[0] * MM, pc.box[1] * MM)
+            pc.draw(page, o + pc.box[0] * MM, o + pc.box[1] * MM)
+        if bleed or marks:
+            trim = pymupdf.Rect(o, o, o + fig.width * MM, o + fig.height * MM)
+            if marks:
+                # the bleed area past the figure is cut away: white over what reaches beyond it
+                for r in (pymupdf.Rect(0, 0, page.rect.width, slug * MM),
+                          pymupdf.Rect(0, page.rect.height - slug * MM, page.rect.width, page.rect.height),
+                          pymupdf.Rect(0, 0, slug * MM, page.rect.height),
+                          pymupdf.Rect(page.rect.width - slug * MM, 0, page.rect.width, page.rect.height)):
+                    page.draw_rect(r, color=None, fill=(1, 1, 1), width=0)
+                sh = page.new_shape()
+                gap, length = (bleed + 1.0) * MM, 5.0 * MM
+                for cx, sx in ((trim.x0, -1), (trim.x1, 1)):
+                    for cy, sy in ((trim.y0, -1), (trim.y1, 1)):
+                        sh.draw_line(pymupdf.Point(cx + sx * gap, cy), pymupdf.Point(cx + sx * (gap + length), cy))
+                        sh.draw_line(pymupdf.Point(cx, cy + sy * gap), pymupdf.Point(cx, cy + sy * (gap + length)))
+                sh.finish(color=(0, 0, 0), width=0.25)
+                sh.commit()
+            page.set_bleedbox(pymupdf.Rect(slug * MM, slug * MM, page.rect.width - slug * MM,
+                                           page.rect.height - slug * MM))
+            page.set_trimbox(trim)
         return doc
 
     def sprite(self, pc: Piece, px_per_mm: float) -> dict:
@@ -979,6 +1184,8 @@ class Renderer:
         pad = pc.pad + 0.5
         x, y, w, h = pc.box
         W, H = max(w + 2 * pad, 0.2), max(h + 2 * pad, 0.2)
+        # a large piece (a figure placed whole on a poster) at a high zoom is shown from fewer pixels, scaled up
+        px_per_mm = min(px_per_mm, math.sqrt(MAX_SPRITE_PX / (W * H)), MAX_SPRITE_SIDE / max(W, H))
         out = self.cache / "sprites" / f"{_h(pc.key, round(px_per_mm, 2), round(W, 3), round(H, 3))}.png"
         if not out.exists():
             doc = pymupdf.open()
@@ -1002,6 +1209,7 @@ class Renderer:
             fig = self.run_figure(file)
         except Exception:                              # noqa: BLE001
             return {"figure": name, "file": str(Path(file).resolve()), "error": _user_traceback(Path(file).name)}
+        self._stack, self.used = [Path(file).resolve()], {Path(file).resolve()}
         pieces, infos, labels = self.pieces(fig)
         doc = self.compose(fig, pieces)
         out = self.cache / "out"
@@ -1029,6 +1237,7 @@ class Renderer:
             "labelStyle": {"props": _jsonable(lab.props), "site": lab.site, "preset": lab.preset,
                            "viaFigure": lab is not st.labels},
             "journal": _journal_info(fig),
+            "poster": _poster_info(fig),
             "elements": infos,
             "labels": labels,
             "guides": [{"x": g["x"], "y": g["y"], "site": g["site"]} for g in fig.guides],
@@ -1052,7 +1261,12 @@ class Renderer:
             if oid in names:
                 return f"panel {names[oid]}"
             if info and info["kind"] == "text":
-                return f"text “{info['props']['text'][:24]}”"
+                t = info["props"]["text"] or Path(info["props"].get("source") or "").name
+                return f"text “{t[:24]}”"
+            if info and info["kind"] == "figure":
+                return f"figure {Path(info['props']['source']).name}"
+            if info and info["kind"] == "qr":
+                return "the QR code"
             return f"{info['kind'] if info else 'element'} {oid}"
 
         for info in infos:
@@ -1068,7 +1282,9 @@ class Renderer:
             if pc.kind in ("text", "label", "bracket") and m.get("size", 99) < min_font - 1e-6:
                 warn.append({"level": "warning", "oid": pc.oid,
                              "message": f"{who(pc.oid)}: {m['size']:g} pt text is below the {min_font:g} pt minimum"})
-            if m.get("pdf") and pc.kind in ("panel", "image"):
+            for w_ in m.get("nested") or []:            # from inside a figure placed whole
+                warn.append({**w_, "oid": pc.oid, "message": f"{who(pc.oid)}: {w_['message']}"})
+            if m.get("pdf") and pc.kind in ("panel", "image", "figure"):
                 try:
                     page = self._doc(m["pdf"])[0]
                 except Exception:                      # noqa: BLE001
@@ -1095,12 +1311,40 @@ class Renderer:
                              "message": f"{who(pc.oid)}: {m['dpi']:.0f} dpi at this size (minimum {min_dpi:g}); "
                                         "make it smaller or use a larger picture"})
         W, H = fig.width, fig.height
+        poster = fig.props.get("poster")
+        margin = fig.props.get("margin")
+        # what must print, kept off a poster's edges; shapes may run to the edge or past it (into the bleed)
+        shapes = ("rect", "ellipse", "line", "path", "zoom")
         for info in infos + labels:
             x, y, w, h = info["box"]
+            if poster and info["kind"] in shapes:
+                continue
             if x < -0.01 or y < -0.01 or x + w > W + 0.01 or y + h > H + 0.01:
                 warn.append({"level": "warning", "oid": info["oid"],
                              "message": f"{who(info.get('panel', info['oid']))}"
                                         f"{' label' if info['kind'] == 'label' else ''} reaches outside the figure"})
+            elif margin and not info.get("parent") and w > 0 and (
+                    x < margin - 0.01 or y < margin - 0.01 or x + w > W - margin + 0.01 or y + h > H - margin + 0.01):
+                warn.append({"level": "warning", "oid": info["oid"],
+                             "message": f"{who(info.get('panel', info['oid']))}"
+                                        f"{' label' if info['kind'] == 'label' else ''} is within the {margin:g} mm "
+                                        "margin along the edge, which printers may trim"})
+        for info in infos:
+            if info.get("overflow"):
+                fix = (f"even at the {min_font:g} pt minimum; shorten it or make the box taller"
+                       if info["props"].get("fit") == "shrink" else
+                       "shorten it, make the box taller, or fit=\"shrink\"")
+                warn.append({"level": "warning", "oid": info["oid"],
+                             "message": f"{who(info['oid'])}: runs {info['overflow']:g} mm past its "
+                                        f"{info['props']['height']:g} mm box, {fix}"})
+            if info["kind"] == "qr" and info.get("module") is not None:
+                if info["module"] < 0.4:
+                    warn.append({"level": "warning", "oid": info["oid"],
+                                 "message": f"the QR code's squares are {info['module']:.2f} mm; at under 0.4 mm "
+                                            "phones may not read it: make it larger or its data shorter"})
+                elif poster and info["box"][2] < 30:
+                    warn.append({"level": "info", "oid": info["oid"],
+                                 "message": "a QR code on a poster scans from a step away when it is 3 cm or more"})
         for w_ in _color_vision(infos, fig):
             if w_["oid"] is not None:
                 w_["message"] = who(w_["oid"]) + w_["message"][w_["message"].index(":"):]
@@ -1133,7 +1377,8 @@ class Renderer:
         return got
 
     def export(self, file: str, path: str, fmt: str | None = None, dpi: int = 600, dark: bool = False,
-               cmyk: bool = False, outline: bool = False, journal: str | None = None) -> dict:
+               cmyk: bool = False, outline: bool = False, journal: str | None = None, bleed: float = 0.0,
+               marks: bool = False) -> dict:
         """Write the figure to `path` as PDF, SVG, EPS, PNG, TIFF, JPEG or PPTX (`dark`: its dark version). `cmyk`
         converts colors for print (PDF, EPS, TIFF, JPEG); `outline` turns text into shapes (PDF, EPS, SVG).
         PDF/EPS conversions use Ghostscript.
@@ -1144,27 +1389,42 @@ class Renderer:
         journal, else the usual standard; see journals.dpi): the line-art dpi, or the combination dpi when the figure
         holds pictures, for TIFF and JPEG; the photo dpi for rasters inside PDF and EPS, and the line-art dpi for
         what Ghostscript rasterizes. The file written is then measured, and pictures below the dpi asked for
-        photographs are reported (`resolution`, warnings)."""
+        photographs are reported (`resolution`, warnings).
+
+        A poster (Figure(poster=...)) is held to poster resolutions instead (journals.POSTER_DPI) unless `journal`
+        is named, and its rasters to at most 300 dpi. `bleed` (mm) and `marks` (crop marks) are for PDF: the page
+        grows past the figure's edges, which become its TrimBox. Every PDF, PNG, TIFF and SVG records what it was
+        made from (`provenance`), for `fignimble provenance` to check against the project later."""
         self._docs.clear()
         self.dark = dark
         path = str(Path(path) if Path(path).is_absolute() else self._cwd / path)
         fig = self.run_figure(file)
-        pieces, infos, labels = self.pieces(fig)
-        doc = self.compose(fig, pieces)
         fmt = (fmt or Path(path).suffix.lstrip(".")).lower()
+        if (bleed or marks) and fmt != "pdf":
+            raise ValueError("bleed and crop marks are for PDF, what print shops take")
+        self._stack, self.used = [self.resolve(file)], {self.resolve(file)}
+        pieces, infos, labels = self.pieces(fig)
+        doc = self.compose(fig, pieces, bleed, marks)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if fmt == "png" and cmyk:
             raise ValueError("PNG has no CMYK; export a TIFF or a PDF")
         journal = (journal or fig.style.props.get("journal") or None)
-        need = journals.dpi(journal)
+        poster = fig.props.get("poster") and not journal
+        need = dict(journals.POSTER_DPI) if poster else journals.dpi(journal)
         kind = "combination" if doc[0].get_image_info() else "line"
         notes = []
         used = int(dpi)
         if fmt in ("tif", "tiff", "jpg", "jpeg") and used < need[kind]:
-            notes.append(f"{used} dpi raised to {need[kind]} dpi: {self._jname(journal)} that of {kind} figures")
+            notes.append(f"{used} dpi raised to {need[kind]} dpi: {self._jname(journal, poster)} that of {kind} figures")
             used = need[kind]
         top = journals.JOURNALS.get((journal or "").lower(), {}).get("max_dpi")
-        if top and fmt in ("tif", "tiff", "jpg", "jpeg", "png") and used > top:
+        if poster and fmt in ("tif", "tiff", "jpg", "jpeg", "png", "pptx"):
+            cap = journals.POSTER_MAX_DPI if fmt != "pptx" else 200
+            if used > cap:
+                notes.append(f"{used} dpi lowered to {cap} dpi: at a poster's size more would be "
+                             f"{fig.width / 25.4 * used * fig.height / 25.4 * used / 1e6:.0f} megapixels")
+                used = cap
+        elif top and fmt in ("tif", "tiff", "jpg", "jpeg", "png") and used > top:
             notes.append(f"{used} dpi is more than the {top} dpi {journals.JOURNALS[journal.lower()]['name']} takes "
                          "without resizing the figure")
         if fmt in ("pdf", "eps") and used != 600:
@@ -1174,11 +1434,13 @@ class Renderer:
             self.raster_dpi = max(used, need["photo"])
             try:
                 pieces, infos, labels = self.pieces(fig)
-                doc = self.compose(fig, pieces)
+                doc = self.compose(fig, pieces, bleed, marks)
             finally:
                 self.raster_dpi = 600
+        prov = self.provenance(file)
         if fmt in ("pdf", "eps"):
-            doc.set_metadata({"creator": "Fignimble", "producer": "Fignimble (PyMuPDF)", "title": Path(file).stem})
+            doc.set_metadata({"creator": "Fignimble", "producer": "Fignimble (PyMuPDF)", "title": Path(file).stem,
+                              "subject": provenance_line(prov), "keywords": PROVENANCE_TAG + json.dumps(prov)})
             if fmt == "pdf" and not (cmyk or outline):
                 doc.save(path, garbage=3, deflate=True)
             else:
@@ -1187,7 +1449,10 @@ class Renderer:
                     doc.save(src, garbage=3, deflate=True)
                     _ghostscript(src, path, fmt, cmyk, outline, dpi=max(used, need["line"]))
         elif fmt == "svg":
-            Path(path).write_text(doc[0].get_svg_image(text_as_path=outline), encoding="utf-8")
+            svg = doc[0].get_svg_image(text_as_path=outline)
+            at = svg.find(">", svg.find("<svg")) + 1
+            svg = svg[:at] + f"\n<metadata>{PROVENANCE_TAG}{_xml_escape(json.dumps(prov))}</metadata>" + svg[at:]
+            Path(path).write_text(svg, encoding="utf-8")
         elif fmt in ("png", "tif", "tiff", "jpg", "jpeg"):
             z = used / 72
             alpha = fmt == "png" and not self.c(fig.props["background"])
@@ -1197,9 +1462,13 @@ class Renderer:
             if cmyk:
                 im = _to_cmyk(im)
             if fmt == "png":
-                im.save(path, dpi=(used, used))
+                from PIL.PngImagePlugin import PngInfo
+                meta = PngInfo()
+                meta.add_text("fignimble", json.dumps(prov))
+                im.save(path, dpi=(used, used), pnginfo=meta)
             elif fmt in ("tif", "tiff"):
-                im.save(path, dpi=(used, used), compression="tiff_lzw")
+                im.save(path, dpi=(used, used), compression="tiff_lzw",
+                        tiffinfo={270: PROVENANCE_TAG + json.dumps(prov)})
             else:
                 im.save(path, dpi=(used, used), quality=95)
         elif fmt == "pptx":
@@ -1208,7 +1477,7 @@ class Renderer:
             pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(z, z), alpha=not self.c(fig.props["background"]))
             slides.write_pptx(path, pix.tobytes("png"), fig.width, fig.height,
                               svg=doc[0].get_svg_image(text_as_path=True), title=Path(file).stem,
-                              alt=fig.caption_text)
+                              alt=fig.caption_text, slide=(fig.width, fig.height) if fig.props.get("poster") else None)
         else:
             raise ValueError(f"can't export {fmt}; use pdf, svg, eps, png, tiff, jpg or pptx")
         if fmt == "pptx":
@@ -1216,7 +1485,8 @@ class Renderer:
                     "resolution": {"dpi": used, "notes": notes},
                     "warnings": [f"element {i['oid']} failed: {i['error'].strip().splitlines()[-1]}"
                                  for i in infos if i.get("error")]}
-        res = self._check_resolution(path, fmt, fig, pieces, need, kind, journal)
+        res = self._check_resolution(path, fmt, fig, pieces, need, kind, journal, poster,
+                                     (bleed + (CROP_SLUG if marks else 0)) * MM)
         res["notes"] = notes + res.get("notes", [])
         errors = [i for i in infos if i.get("error")]
         return {"ok": True, "path": str(Path(path).resolve()), "format": fmt, "resolution": res,
@@ -1224,14 +1494,55 @@ class Renderer:
                 + res["problems"]}
 
     @staticmethod
-    def _jname(journal):
+    def _jname(journal, poster=False):
+        if poster:
+            return "posters ask"
         j = journals.JOURNALS.get((journal or "").lower())
         return j["name"] + " asks" if j else "journals ask"
 
-    def _check_resolution(self, path, fmt, fig, pieces, need, kind, journal) -> dict:
-        """Measure the file written: a raster's own dpi as printed, or every picture inside a PDF or EPS."""
+    def provenance(self, file: str) -> dict:
+        """What a figure was made from: Fignimble's version, the project's git commit (and whether files differed
+        from it), and a SHA-256 of each file the render read that is known (the figure, figures placed in it,
+        panel code, pictures, tables, text files)."""
+        import datetime
+        import hashlib as hl
+        from . import __version__
+        files = {}
+        for f in sorted(self.used):
+            try:
+                rel = str(f.relative_to(self.project))
+            except ValueError:
+                rel = str(f)
+            try:
+                files[rel] = hl.sha256(f.read_bytes()).hexdigest()[:16]
+            except OSError:
+                pass
+        style = self.project / "style.py"
+        if style.exists() and "style.py" not in files:
+            files["style.py"] = hl.sha256(style.read_bytes()).hexdigest()[:16]
+        out = {"fignimble": __version__, "figure": str(self.resolve(file).relative_to(self.project))
+               if str(self.resolve(file)).startswith(str(self.project)) else str(file),
+               "made": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "files": files}
+        git = shutil.which("git")
+        if git:
+            try:
+                head = subprocess.run([git, "rev-parse", "HEAD"], cwd=self.project, capture_output=True, text=True,
+                                      timeout=10)
+                if head.returncode == 0:
+                    out["git"] = head.stdout.strip()
+                    st = subprocess.run([git, "status", "--porcelain", "--untracked-files=no"], cwd=self.project,
+                                        capture_output=True, text=True, timeout=10)
+                    changed = [ln[3:] for ln in st.stdout.splitlines() if ln.strip()]
+                    out["uncommitted"] = changed[:50]
+            except (OSError, subprocess.SubprocessError):
+                pass
+        return out
+
+    def _check_resolution(self, path, fmt, fig, pieces, need, kind, journal, poster=False, edge=0.0) -> dict:
+        """Measure the file written: a raster's own dpi as printed, or every picture inside a PDF or EPS. `edge`
+        (points): the bleed and crop-mark border around the figure on the page."""
         out = {"journal": journal, "kind": kind, "need": need, "problems": [], "notes": []}
-        who = self._jname(journal)
+        who = self._jname(journal, poster)
         if fmt in ("png", "tif", "tiff", "jpg", "jpeg"):
             from PIL import Image
             with Image.open(path) as im:
@@ -1262,7 +1573,7 @@ class Renderer:
         try:
             with pymupdf.open(check) as d:
                 page = d[0]
-                sx = fig.width * MM / page.rect.width                 # an EPS may come back at another scale
+                sx = (fig.width * MM + 2 * edge) / page.rect.width    # an EPS may come back at another scale
                 worst = None
                 for im in page.get_image_info():
                     bx0, by0, bx1, by1 = im["bbox"]
@@ -1270,7 +1581,7 @@ class Renderer:
                     if wi < 0.2 or not im.get("width"):
                         continue
                     got = im["width"] / wi
-                    cx, cy = (bx0 + bx1) / 2 * sx / MM, (by0 + by1) / 2 * sx / MM
+                    cx, cy = ((bx0 + bx1) / 2 * sx - edge) / MM, ((by0 + by1) / 2 * sx - edge) / MM
                     oid = next((pc.oid for pc in reversed(pieces) if pc.box[0] <= cx <= pc.box[0] + pc.box[2]
                                 and pc.box[1] <= cy <= pc.box[1] + pc.box[3]), None)
                     if worst is None or got < worst[0]:
@@ -1292,6 +1603,44 @@ class Renderer:
 
 
 # --- helpers ---
+
+PROVENANCE_TAG = "fignimble-provenance:"
+
+
+def provenance_line(prov: dict) -> str:
+    """A provenance record in a sentence, for a PDF's Subject."""
+    where = f" at git {prov['git'][:10]}" + (" with uncommitted changes" if prov.get("uncommitted") else "") \
+        if prov.get("git") else ""
+    return f"Made with Fignimble {prov['fignimble']} from {prov['figure']}{where}, {prov['made']}"
+
+
+def read_provenance(path: str) -> dict | None:
+    """The provenance record an export wrote into a PDF, PNG, TIFF or SVG, or None."""
+    p = Path(path)
+    ext = p.suffix.lower()
+    raw = None
+    if ext == ".pdf":
+        with pymupdf.open(str(p)) as d:
+            raw = (d.metadata or {}).get("keywords") or ""
+    elif ext == ".svg":
+        m = re.search(r"<metadata>(.*?)</metadata>", p.read_text(encoding="utf-8", errors="replace"), re.S)
+        if m:
+            import html
+            raw = html.unescape(m.group(1))
+    elif ext in (".png", ".tif", ".tiff"):
+        from PIL import Image
+        with Image.open(p) as im:
+            raw = im.info.get("fignimble") if ext == ".png" else (im.tag_v2.get(270) if hasattr(im, "tag_v2") else None)
+            if raw and ext == ".png":
+                raw = PROVENANCE_TAG + raw
+    if not raw or PROVENANCE_TAG not in raw:
+        return None
+    return json.loads(raw.split(PROVENANCE_TAG, 1)[1])
+
+
+def _xml_escape(t: str) -> str:
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 
 def _contain(aspect: float, w: float, h: float) -> tuple:
     if w / h > aspect:
@@ -1406,6 +1755,41 @@ def _bracket_piece(r: Renderer, oid, e, pdf, tw, th) -> Piece:
     return Piece(oid, "bracket", box, key, draw, pad=p["width"] / MM)
 
 
+def _qr_piece(oid: str, p: dict) -> Piece:
+    """A QR code: its dark modules as filled squares on its light ones. Never recolored for a dark version
+    (scanners want dark on light)."""
+    mods = qr.modules(p["data"], p.get("level") or "M")
+    q = max(int(p.get("quiet", 4)), 0)
+    n = len(mods)
+    w = float(p["w"])
+    cell = w / (n + 2 * q)
+    box = (p["x"], p["y"], w, w)
+    fg, bg = rgb(p.get("color") or "#000000"), rgb(p["background"]) if p.get("background") else None
+    key = _h("qr", p["data"], p.get("level"), q, w, fg, bg)
+
+    def draw(page, ox, oy):
+        if bg:
+            page.draw_rect(pymupdf.Rect(ox, oy, ox + w * MM, oy + w * MM), color=None, fill=bg, width=0)
+        sh = page.new_shape()
+        c = cell * MM
+        for y, row in enumerate(mods):
+            x = 0
+            while x < n:
+                if not row[x]:
+                    x += 1
+                    continue
+                x1 = x
+                while x1 < n and row[x1]:
+                    x1 += 1
+                # a run of dark modules as one rectangle, a hair taller so rows don't show seams between them
+                sh.draw_rect(pymupdf.Rect(ox + (q + x) * c, oy + (q + y) * c, ox + (q + x1) * c,
+                                          oy + (q + y + 1) * c + (0.02 * c if y + 1 < n else 0)))
+                x = x1
+        sh.finish(color=None, fill=fg, width=0)
+        sh.commit()
+    return Piece(oid, "qr", box, key, draw, meta={"module": cell, "modules": n})
+
+
 def _error_piece(oid, box, err) -> Piece:
     msg = err.strip().splitlines()[-1] if err.strip() else "error"
 
@@ -1423,6 +1807,15 @@ def _rough_box(e) -> tuple:
         return (min(p["x1"], p["x2"]), min(p.get("y1", p.get("y", 0)), p.get("y2", p.get("y", 0))),
                 max(abs(p["x2"] - p["x1"]), 5), 5)
     return (p.get("x", 0), p.get("y", 0), p.get("w") or 20, p.get("h") or 15)
+
+
+def _poster_info(fig):
+    k = fig.props.get("poster")
+    if not k:
+        return None
+    pr = journals.POSTERS[k]
+    return {"key": k, "name": pr["name"], "landscape": bool(fig.props.get("landscape")), "margin": fig.props.get("margin"),
+            "size": pr["size"], "minFont": pr["min_font"]}
 
 
 def _journal_info(fig):
@@ -1951,7 +2344,8 @@ def _mt(s: str) -> str:
     s = s.replace("\\", r"\backslash ")
     for ch in "{}_^$%#&":
         s = s.replace(ch, "\\" + ch)
-    return s.replace(" ", r"\ ")
+    # a hyphen, not math's spaced minus sign ("multi-panel" in bold)
+    return s.replace(" ", r"\ ").replace("-", r"\text{-}")
 
 
 def _as_mathtext(runs, bold_base: bool) -> str:
@@ -2015,6 +2409,129 @@ def _rich(text: str, bold_base: bool, width, fig, props) -> str:
                 line = trial
         lines.append(line)
     return "\n".join(_as_mathtext(l, bold_base) for l in lines)
+
+
+_BULLET = re.compile(r"^( *)([-•]) +(.*)$")
+_BULLET_MD = re.compile(r"^( *)([-•*+]) +(.*)$")
+_NUMBERED = re.compile(r"^( *)(\d{1,3})[.)] +(.*)$")
+_HEADING = re.compile(r"^(#{1,3}) +(.*)$")
+
+
+def is_flowing(text: str) -> bool:
+    """Text that a text box lays out as blocks: bullets, numbered items or headings."""
+    return any(_BULLET.match(ln) or _NUMBERED.match(ln) or _HEADING.match(ln) for ln in text.split("\n"))
+
+
+def _blocks(text: str, markdown: bool) -> list[dict]:
+    """Text as blocks: {kind: para | item | heading | gap, text, level, marker}. In Markdown (a source file) the
+    lines of a paragraph or an item join with spaces; otherwise each line is a line of its own."""
+    out = []
+    bullet = _BULLET_MD if markdown else _BULLET
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if not line.strip():
+            if out and out[-1]["kind"] != "gap":
+                out.append({"kind": "gap"})
+            continue
+        m = _HEADING.match(line.strip())
+        if m:
+            out.append({"kind": "heading", "level": len(m.group(1)), "text": m.group(2).strip()})
+            continue
+        m = bullet.match(line) or _NUMBERED.match(line)
+        if m:
+            indent, mark, body = m.groups()
+            numbered = mark[0].isdigit()
+            out.append({"kind": "item", "level": min(len(indent) // 2, 2), "text": body.strip(),
+                        "marker": f"{mark}." if numbered else ("•" if len(indent) < 2 else "–")})
+            continue
+        if markdown and out and out[-1]["kind"] in ("para", "item"):
+            out[-1]["text"] += " " + line.strip()          # the paragraph or item goes on
+            continue
+        out.append({"kind": "para", "text": line.strip() if markdown else line, "level": 0})
+    while out and out[-1]["kind"] == "gap":
+        out.pop()
+    return out
+
+
+def _words(text: str) -> list:
+    """Markup split into words, each a list of runs, for wrapping."""
+    words, cur = [], []
+    for t, kind in _runs(text):
+        if kind in ("plain", "bold", "italic"):
+            parts = t.split(" ")
+            for i, w in enumerate(parts):
+                if i > 0:
+                    words.append(cur)
+                    cur = []
+                if w:
+                    cur.append((w, kind))
+        else:
+            cur.append((t, kind))
+    words.append(cur)
+    return [w for w in words if w]
+
+
+def _wrap(words, width_mm: float, measure) -> list:
+    lines, line = [], []
+    for w in words:
+        trial = line + ([(" ", "plain")] if line else []) + w
+        if line and measure(trial) > width_mm:
+            lines.append(line)
+            line = list(w)
+        else:
+            line = trial
+    lines.append(line)
+    return lines
+
+
+HEADING_SCALE = {1: 1.5, 2: 1.25, 3: 1.0}
+LINE_PITCH = 1.25                 # baseline to baseline, in text sizes
+GAP = 0.6                         # a paragraph's space, in lines
+ITEM_GAP = 0.2                    # between list items, in lines
+
+
+def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props) -> list[dict]:
+    """Lay blocks out in a box `width_mm` wide: lines [{text (mathtext), size, bold, x (mm), y (baseline, pt from
+    the top), marker, mx}], and the height (pt) as the last entry's "end"."""
+    r = fig.canvas.get_renderer()
+    cache: dict = {}
+
+    def measure(runs, s, b) -> float:
+        key = (tuple(runs), s, b)
+        if key not in cache:
+            t = fig.text(0, 0, _as_mathtext(runs, b), **{**props, "fontsize": s,
+                                                          "fontweight": "bold" if b else props["fontweight"]})
+            cache[key] = t.get_window_extent(r).width / fig.dpi * 25.4
+            t.remove()
+        return cache[key]
+
+    out, y, first = [], 0.0, True
+    for b in blocks:
+        if b["kind"] == "gap":
+            y += GAP * LINE_PITCH * size
+            continue
+        s, bb = size, bold
+        if b["kind"] == "heading":
+            s, bb = size * HEADING_SCALE[b["level"]], True
+            if not first:
+                y += 0.35 * LINE_PITCH * size
+        indent = hang = 0.0
+        if b["kind"] == "item":
+            if not first and out and out[-1].get("item"):
+                y += ITEM_GAP * LINE_PITCH * size
+            em = s * 25.4 / 72                              # mm
+            indent = b["level"] * 1.2 * em
+            hang = (measure([("00.", "plain")], s, bb) if b["marker"][0].isdigit() else measure([("•", "plain")], s, bb)) \
+                + 0.45 * em
+        lines = _wrap(_words(b["text"]), max(width_mm - indent - hang, 1.0), lambda rr: measure(rr, s, bb))
+        for k, ln in enumerate(lines):
+            y += s * 1.0 if (k or out) else s * 0.8          # down to this line's baseline
+            out.append({"text": _as_mathtext(ln, bb), "size": s, "bold": bb, "x": indent + hang, "y": y,
+                        "marker": b.get("marker") if k == 0 else None, "mx": indent, "item": b["kind"] == "item"})
+            y += s * (LINE_PITCH - 1.0)
+        first = False
+        if b["kind"] == "heading":
+            y += 0.15 * LINE_PITCH * size
+    return out
 
 
 def _gs():

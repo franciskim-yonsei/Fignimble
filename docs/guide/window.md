@@ -78,4 +78,5 @@ alt text.
 ## Dropping files
 
 Drop PNG, TIFF, JPEG, PDF or SVG files on the canvas to place them as pictures, `.py` files to place them as
-panels, and CSV or TSV files to place them as tables. They are copied into the project.
+panels, and CSV or TSV files to place them as tables. They are copied into the project. A figure file of the project
+is [placed whole](posters.md#placing-a-figure-in-a-figure).

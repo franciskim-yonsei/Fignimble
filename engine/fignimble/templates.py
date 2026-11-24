@@ -42,6 +42,68 @@ fig.table("{source}", x=3, y=3, grid=True)
 '''
 
 
+def poster_py(preset: str, landscape: bool = False, figures: list[str] | None = None) -> str:
+    """A poster to start from: a title band, authors, columns of sections with text boxes, the project's first
+    figure placed whole, and a QR code. Everything in mm from the top-left, for the preset's size."""
+    from .journals import POSTERS, poster_size, resolve
+    key, turned = resolve(preset)                         # a template ("48x36", "a0-landscape") or a preset
+    landscape = landscape != turned
+    pr = POSTERS[key]
+    W, H = poster_size(key, landscape)
+    m = pr["margin"] + 5
+    cols = 3 if W / H <= 1.05 else (4 if W / H < 1.7 else 5)     # columns for the page's shape
+    gut = round(W * 0.025, 1)
+    cw = round((W - 2 * m - (cols - 1) * gut) / cols, 1)
+    pt = 25.4 / 72                                       # mm per point
+    band = min(H * (0.13 if W <= H else 0.17), (pr["title"] + pr["heading"]) * pt * 1.9)
+    ty = round(max(band * 0.22, pr["margin"] + 3), 1)     # the title clear of the margin, the band around it
+    ay = round(ty + pr["title"] * pt * 1.35, 1)
+    band = round(max(band, ay + pr["heading"] * pt * 1.8), 1)
+    title, head = pr["title"], pr["heading"]
+    xs = [round(m + i * (cw + gut), 1) for i in range(cols)]
+    top = band + m
+    sec_h = round((H - top - m) / 2 - gut, 1)
+    fig_name = (figures or [None])[0]
+    lines = [
+        "from fignimble import *",
+        "",
+        f'fig = Figure(poster="{key}"{", landscape=True" if landscape else ""})'
+        "          # the size, and type sizes for reading from a meter or two (Style.poster)",
+        "",
+        "# title band, run past the edges so trimming leaves no white line (export with a bleed)",
+        f'fig.rect(-5, -5, {W + 10:g}, {band + 5:g}, stroke=None, fill="#0B3C5D")',
+        f'fig.text("Title of the poster", x={m:g}, y={ty:g}, size={title}, weight="bold", '
+        f'color="#FFFFFF", width={round(W - 2 * m, 1):g})',
+        f'fig.text("Author One, Author Two and Author Three · Lab, Institution", x={m:g}, '
+        f'y={ay:g}, size={head}, color="#FFFFFF", width={round(W - 2 * m, 1):g})',
+        "",
+        "# sections: a heading and a text box each; height= makes preflight say when text overflows",
+    ]
+    sections = ["Background", "Approach", "Results", "Discussion", "Conclusions", "References"][:cols * 2 - (1 if fig_name else 0)]
+    k = 0
+    for i in range(cols):
+        for j in range(2):
+            if fig_name and i == 1 and j == 0:
+                continue
+            if k >= len(sections):
+                break
+            y = round(top + j * (sec_h + gut), 1)
+            lines.append(f'fig.text("# {sections[k]}\\n{_PLACEHOLDER}", x={xs[i]:g}, y={y:g}, width={cw:g}, '
+                         f'height={sec_h:g})')
+            k += 1
+    if fig_name:
+        lines += ["", "# a figure of the paper, placed whole and drawn from its code (scaled: its text grows with it)",
+                  f'fig.figure("{fig_name}.py", x={xs[1]:g}, y={top:g}, w={cw:g})']
+    q = round(min(60.0, cw * 0.4), 1)
+    lines += ["", "# the paper's or the code's link",
+              f'fig.qr("https://example.org", x={round(W - m - q, 1):g}, y={round(H - m - q, 1):g}, w={q:g})', ""]
+    return "\n".join(lines)
+
+
+_PLACEHOLDER = ("Text in a box wraps to its width. Lines starting with - are bullets:\\n- **bold** and *italic*\\n"
+                "- or take the text from a file: fig.text(source=\\\"intro.md\\\", ...)")
+
+
 def panel_py(name: str = "panel") -> str:
     return '''"""A panel: draw(fig) gets a matplotlib Figure exactly the panel's size. Fonts, text sizes and line widths come
 from the project's style, so leave them out here and every panel will match."""
@@ -63,13 +125,20 @@ def draw(fig, kind="lines"):
 '''
 
 
-def new_project(folder: str, journal: str | None = "nature") -> dict:
-    """A new project folder with a style and a first figure, empty: no panels, nothing from another project."""
+def new_project(folder: str, journal: str | None = "nature", poster: str | None = None,
+                landscape: bool = False) -> dict:
+    """A new project folder with a style and a first figure, empty: no panels, nothing from another project.
+    With `poster` (a size: a0, a1, 36x48, ...), the first figure is a poster to start from."""
     d = Path(folder)
     if d.exists() and any(p for p in d.iterdir() if not p.name.startswith(".")):
         raise FileExistsError(f"{d} is not empty")
     (d / "panels").mkdir(parents=True, exist_ok=True)
     (d / "images").mkdir(exist_ok=True)
+    if poster:
+        text = poster_py(poster, landscape)
+        (d / "poster.py").write_text(text, encoding="utf-8")
+        (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
+        return {"ok": True, "project": str(d.resolve()), "figure": "poster"}
     width = journals.width(journal, "double") if journal else 183
     (d / "style.py").write_text(style_py(journal), encoding="utf-8")
     (d / "fig1.py").write_text(figure_py(width, 100), encoding="utf-8")
@@ -152,6 +221,17 @@ Tables: `fig.table("tables/counts.csv", x=4, y=80, decimals=2)` (CSV/TSV in `tab
 the numbers in the data file, not in the figure. Journals want tables as text: `fignimble table fig1.py 3 table1.docx`
 writes one as a Word table.
 
+**Figures inside figures, and posters.** `fig.figure("fig2.py", x=20, y=130, w=360)` places another figure of the
+project whole, drawn from its code (scaled to `w`, text and lines with it; `letters=False` drops its panel letters,
+`style=` redraws it with another Style, `label="auto"` letters it as one panel). Never copy a figure's panels into
+another figure to show it again: place the figure. A poster is a figure: `Figure(poster="a0")` (also "48x36", "72x48",
+"24x36", "a1", ...: `fignimble journals` lists them; `landscape=True`) sets its size and `Style.poster`, whose type sizes are for reading from
+a meter or two; preflight checks text at the size it is printed, including inside placed figures, and keeps a margin
+along the edges clear. Text boxes (`width=`) lay out lines starting with "- " as bullets, "1. " as numbered items and
+"# " as headings; `fig.text(source="intro.md", width=..., height=...)` takes the text from a Markdown file (keep a
+poster's prose there), `height=` reports overflow and `fit="shrink"` fits it. `fig.qr("https://...", x=, y=, w=40)`
+is a QR code. Export a poster with `--bleed 3 --crop-marks` when a print shop asks for them.
+
 Other options: `label=None` (no letter) or `label="a'"` on a panel; `Labels(numbering="none")` for no letters at all; `fit=`/`crop=` on images; `group="g1"` to keep
 elements together; `fig.guide(x=91.5)` for an editor guide line. Run `python -c "import fignimble; help(fignimble.Figure)"`
 for every argument.
@@ -161,9 +241,10 @@ for every argument.
 - `fignimble snapshot fig1.py` renders the figure to a PNG and prints its path. Open that picture to check your work.
 - `fignimble info fig1.py` lists every element with its box (mm), the panel labels, and the preflight warnings (text
   below the journal's minimum size, low-resolution pictures, elements outside the figure).
-- `fignimble export fig1.py fig1.pdf` writes the figure (PDF, EPS, SVG, TIFF, PNG, JPEG; `--dark` for its dark version,
-  `--journal cell` for that journal's resolutions; TIFF/JPEG are raised to them and every export is measured). Don't run
-  other renderers.
+- `fignimble export fig1.py fig1.pdf` writes the figure (PDF, EPS, SVG, TIFF, PNG, JPEG, PPTX; `--dark` for its dark
+  version, `--journal cell` for that journal's resolutions; TIFF/JPEG are raised to them and every export is measured).
+  Don't run other renderers. Each export records what it was made from; `fignimble provenance fig1.pdf` checks it
+  against the project.
 
 ## Keep the figures editable by hand
 

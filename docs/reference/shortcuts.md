@@ -45,6 +45,8 @@ From the menus of Fignimble (generated from the app's menu definitions).
 | New Table | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
 | BioCartoon Icons | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>B</kbd> |
 
+**Insert ▸ Figure…** and **QR Code…** have no shortcut.
+
 ## Object
 
 | Command | Keys |
@@ -97,7 +99,7 @@ From the menus of Fignimble (generated from the app's menu definitions).
 | Move one panel letter (instead of all) | <kbd>⌥</kbd>-drag |
 | Pan | scroll, or hold <kbd>Space</kbd> and drag |
 | Zoom | <kbd>⌘</kbd>-scroll or pinch |
-| Retype a text; open a panel's code; type in a table cell | double-click |
+| Retype a text; open a panel's code; type in a table cell; open a figure placed whole; edit a text's Markdown file | double-click |
 | Unlink a panel letter from its panel (or link it again) | double-click the letter |
 | Back from a text in a panel to the panel | <kbd>Esc</kbd> |
 

@@ -11,6 +11,16 @@ Text takes markup: `**bold**`, `*italic*`, `^{superscript}`, `_{subscript}`, and
 signs (`"$\\alpha$-actin"`). `width` makes a text box whose lines wrap. Double-click a text to retype it in place;
 the inspector sets its size, color, weight, alignment and rotation. The default size is the style's.
 
+In a text box, lines starting with `- ` are bullets, `1. ` numbered items and `# ` headings, and an empty line
+starts a paragraph. `source="intro.md"` takes the text from a Markdown file. `height` is the box's height, and
+`fit="shrink"` makes the type smaller until the text fits it. These are made for
+[posters](posters.md#text-on-a-poster), and work in any figure.
+
+## QR codes
+
+`fig.qr("https://...", x=150, y=90, w=25)` (**Insert ▸ QR Code…**) is a QR code for a link, drawn as vector squares.
+See [QR codes](posters.md#qr-codes).
+
 ## Lines, arrows and paths
 
 ```python
