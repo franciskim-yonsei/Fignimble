@@ -1,0 +1,44 @@
+<Window x:Class="Fignimble.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Fignimble.Windows"
+        Title="Fignimble for Windows" Width="1120" Height="760" MinWidth="680" MinHeight="450"
+        PreviewKeyDown="HandleKey">
+  <DockPanel>
+    <ToolBar DockPanel.Dock="Top">
+      <Button x:Name="OpenButton" Click="OpenClicked" Padding="8,4">_Open project…</Button>
+      <Separator />
+      <Label Target="{Binding ElementName=Figures}" Content="_Figure:" />
+      <ComboBox x:Name="Figures" Width="145" SelectionChanged="FigureChanged" AutomationProperties.Name="Figure" />
+      <Button x:Name="ReloadButton" Click="ReloadClicked" Padding="8,4">Reload</Button>
+      <Separator />
+      <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
+      <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
+      <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">Export _PDF…</Button>
+    </ToolBar>
+    <Border DockPanel.Dock="Bottom" BorderBrush="#D0D0D0" BorderThickness="0,1,0,0" Padding="8,4">
+      <TextBlock x:Name="Status" TextWrapping="Wrap" AutomationProperties.Name="Status" />
+    </Border>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" MinWidth="240" />
+        <ColumnDefinition Width="5" />
+        <ColumnDefinition Width="340" MinWidth="190" />
+      </Grid.ColumnDefinitions>
+      <Grid Background="#E6E8EC" ClipToBounds="True">
+        <TextBlock x:Name="EmptyCanvas" Text="Open a folder containing a Fignimble figure (.py)."
+                   HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="16" />
+        <Viewbox x:Name="PageView" Margin="20" Visibility="Collapsed">
+          <local:FigureCanvas x:Name="Page" AutomationProperties.Name="Figure canvas" />
+        </Viewbox>
+      </Grid>
+      <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#D0D0D0" />
+      <DockPanel Grid.Column="2">
+        <TextBlock x:Name="SourceTitle" DockPanel.Dock="Top" Padding="8" FontWeight="SemiBold" Text="Figure source" />
+        <TextBox x:Name="SourceText" IsReadOnly="True" AcceptsReturn="True" FontFamily="Consolas" FontSize="13"
+                 BorderThickness="0" Padding="8" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                 AutomationProperties.Name="Figure source" />
+      </DockPanel>
+    </Grid>
+  </DockPanel>
+</Window>
