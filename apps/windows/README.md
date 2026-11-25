@@ -28,8 +28,13 @@ dotnet run --project apps/windows -- $demo
 4. Select a standalone panel or image to resize it with its blue handle or to enter its exact geometry. Use **Label** to override or suppress its automatic letter. **Annotate** adds text, arrows, and brackets; double-click the annotation’s layer row to edit its details. Click the page background or press Esc to return to page geometry. Ctrl+Z and Ctrl+Y undo and redo.
 5. Review **Preflight**, then choose **Export** and select a format, journal resolution rules, and DPI. The engine can raise a raster export’s DPI to meet the selected journal’s minimum. Review warnings and check the journal’s current requirements before submission.
 
-The source pane is read-only; edits made in an external editor appear automatically, or on **Reload**.
+## Faster editing and export
+
+- **Arrange** also duplicates, groups, ungroups, and removes selected layers. Drag a selection box from a blank spot on the page. Smart snapping aligns moves to page edges, centers, other layers, and guides; hold Alt to bypass it. Add or clear guides under **More**. With the canvas focused, arrow keys nudge by 0.5 mm, Shift+arrow by 5 mm, and Ctrl+arrow by 0.1 mm.
+- **Edit source** opens the figure, style, or a panel file. Apply is one undo step; the editor refuses syntax errors and checks for conflicting changes on disk. The main pane still previews the figure source, and saved external edits still refresh it. **More** also opens the figure caption and the project’s edit history.
+- Select a panel, image, or table and use **More** to edit plot labels, crop or rotate an image, or edit existing table cells. Table editing does not yet add or remove rows or columns. Crop before rotating or flipping an image.
+- **Export** also supports PowerPoint. **More** exports every figure as PDF without clobbering existing PDFs, exports a selected table to Word/Excel/CSV/TSV, and copies a figure bitmap or pastes an image. Clipboard interchange is raster-only.
 
 The app uses the repository's `.venv` by default. Set `FIGNIMBLE_PYTHON` to the full path of another `python.exe` with the engine dependencies installed to override it. `FIGNIMBLE_ENGINE` can point to a different `engine` directory.
 
-This covers the local manuscript workflow, not macOS parity. Current limits include no smart guides or snapping, no direct editing of layout children or inset geometry, no in-place plot or table editing, no editable source pane or embedded terminal, no SSH projects, and no CMYK/EPS or batch export controls.
+This covers the local manuscript workflow, not macOS parity. Current limits include no draggable rulers, no direct editing of layout children or inset geometry, no plot-text editing by clicking the plotted text itself, no embedded terminal or per-project Python discovery, no installer or SSH projects, and no CMYK/EPS controls.

@@ -144,15 +144,25 @@ internal sealed class EngineClient : IDisposable
     }
 }
 
-internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo);
+internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo, string[]? History, string[]? Future,
+    string[]? Panels);
 internal sealed record FigureEntry(string Name);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
-    FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal);
+    FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal,
+    FigureGuide[]? Guides, FigureCaption? Caption);
+internal sealed record FigureGuide(double? X, double? Y);
+internal sealed record FigureCaption(string? Text);
 internal sealed record FigureWarning(string Level, string Message);
 internal sealed record FigureElement(string Oid, string? Kind, double[]? Box, Sprite? Sprite, string? Parent,
-    string? Host, ElementProperties? Props, string? Method, string? Panel, string? Text);
+    string? Host, ElementProperties? Props, string? Method, string? Panel, string? Text, string? Group,
+    SourceLocation? Code, PanelText[]? Texts);
+internal sealed record SourceLocation(string? File);
+internal sealed record PanelText(string Key, string Text)
+{
+    public override string ToString() => $"{Key}: {Text}";
+}
 internal sealed record ElementProperties(bool Locked, bool Hidden, string? Name, string? Source, string? Text,
-    string? Label, double? X1, double? Y1, double? X2, double? Y2);
+    string? Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells);
 internal sealed record RenderJournal(string Key);
 internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths);
 internal sealed record JournalChoice(string Key, string Name, Dictionary<string, double>? Widths = null)

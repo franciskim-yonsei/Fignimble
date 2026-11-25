@@ -123,7 +123,7 @@ public partial class MainWindow
         await During("Loading export options…", async () => { choices = await Journals(); Status.Text = "Choose export options."; });
         if (choices.Length == 0) return;
         var dialog = new FormDialog(this, "Export figure");
-        var formats = new[] { "PDF", "SVG", "PNG", "TIFF" };
+        var formats = new[] { "PDF", "SVG", "PNG", "TIFF", "PPTX" };
         var format = dialog.Choice("Format", formats, formats[0]);
         var journal = dialog.Choice("Journal resolution rules", choices.Prepend(FigureJournal), FigureJournal);
         var resolution = dialog.Text("Resolution (dpi; raster content only)", "600");

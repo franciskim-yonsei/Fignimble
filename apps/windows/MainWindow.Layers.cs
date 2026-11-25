@@ -26,6 +26,7 @@ public partial class MainWindow
             string? label = labels[e.Oid].FirstOrDefault();
             if (!string.IsNullOrEmpty(label)) title = $"{label} · {title}";
             if (!string.IsNullOrWhiteSpace(name)) title += $": {name}";
+            if (e.Group is { } group) title += $" [{group}]";
             if (e.Props is { Hidden: true }) title += " [hidden]";
             if (e.Props is { Locked: true }) title += " [locked]";
             return new LayerRow(e.Oid, title);
@@ -78,7 +79,7 @@ public partial class MainWindow
         VisibilityButton.IsEnabled = LockButton.IsEnabled = ready && selected is not null;
         VisibilityButton.Content = selected?.Props?.Hidden == true ? "Show" : "Hide";
         LockButton.Content = selected?.Props?.Locked == true ? "Unlock" : "Lock";
-        ArrangeButton.IsEnabled = ready && Page.SelectedIds.Count >= 2 && Page.Selections.All(FigureCanvas.Movable);
+        ArrangeButton.IsEnabled = ready && Page.SelectedIds.Count > 0;
     }
 
     private async void LayerButtonClicked(object sender, RoutedEventArgs e) => await LayerOrder((string)((Button)sender).Tag);
@@ -110,18 +111,62 @@ public partial class MainWindow
         foreach (var (text, value) in new[] { ("Align left", "left"), ("Align horizontal centers", "hcenter"),
             ("Align right", "right"), ("Align top", "top"), ("Align vertical centers", "vcenter"), ("Align bottom", "bottom") })
         {
-            var item = new MenuItem { Header = text };
+            var item = new MenuItem { Header = text, IsEnabled = Page.SelectedIds.Count >= 2 && Page.Selections.All(FigureCanvas.Movable) };
             item.Click += async (_, _) => await Arrange("align", value);
             menu.Items.Add(item);
         }
         menu.Items.Add(new Separator());
         foreach (var (text, axis) in new[] { ("Distribute horizontally", "h"), ("Distribute vertically", "v") })
         {
-            var item = new MenuItem { Header = text, IsEnabled = Page.SelectedIds.Count >= 3 };
+            var item = new MenuItem { Header = text, IsEnabled = Page.SelectedIds.Count >= 3 && Page.Selections.All(FigureCanvas.Movable) };
             item.Click += async (_, _) => await Arrange("distribute", axis);
             menu.Items.Add(item);
         }
+        menu.Items.Add(new Separator());
+        foreach (var (label, op, keys) in new[] { ("Duplicate", "duplicate", "Ctrl+D"),
+            ("Group", "group", "Ctrl+G"), ("Ungroup", "ungroup", "Ctrl+Shift+G"), ("Remove", "delete", "Del") })
+        {
+            var item = new MenuItem { Header = label, InputGestureText = keys, IsEnabled = CanEditLayers(op) };
+            item.Click += async (_, _) => await EditLayers(op);
+            menu.Items.Add(item);
+        }
         menu.IsOpen = true;
+    }
+
+    private bool CanEditLayers(string op)
+    {
+        var selection = Page.Selections;
+        if (selection.Length == 0 || selection.Any(e => !FigureCanvas.Unlocked(e))) return false;
+        return op switch
+        {
+            "group" => selection.Length >= 2 && selection.All(e => FigureCanvas.Movable(e) && e.Group is null),
+            "ungroup" => selection.Any(e => e.Group is not null),
+            "duplicate" => selection.All(e => FigureCanvas.Movable(e) && e.Kind is not ("layout" or "path")),
+            _ => true
+        };
+    }
+
+    private Task EditLayers(string op)
+    {
+        if (!validFigure || shownFigure is not { } figure || !CanEditLayers(op)) return Task.CompletedTask;
+        var selection = Page.Selections;
+        var oids = op == "ungroup" ? Page.IncludeGroupMembers(selection) : selection.Select(e => e.Oid).ToArray();
+        return EditFigure(figure, new { figure, op, oids }, "Editing layers…", clearSelection: op == "delete");
+    }
+
+    private Task? FigureShortcut(Key key, ModifierKeys mods)
+    {
+        if (mods == ModifierKeys.Control && key == Key.D && CanEditLayers("duplicate")) return EditLayers("duplicate");
+        if (mods == ModifierKeys.Control && key == Key.G && CanEditLayers("group")) return EditLayers("group");
+        if (mods == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.G && CanEditLayers("ungroup")) return EditLayers("ungroup");
+        if (mods == ModifierKeys.None && key == Key.Delete && CanEditLayers("delete")) return EditLayers("delete");
+        if (Layers.IsKeyboardFocusWithin || !Page.IsKeyboardFocusWithin || !validFigure || Page.IsDragging ||
+            Page.SelectedIds.Count == 0 || !Page.Selections.All(FigureCanvas.Movable)) return null;
+        double step = mods switch { ModifierKeys.Shift => 5, ModifierKeys.Control => 0.1, ModifierKeys.None => 0.5, _ => 0 };
+        if (step <= 0) return null;
+        Vector delta = key switch { Key.Left => new(-step, 0), Key.Right => new(step, 0),
+            Key.Up => new(0, -step), Key.Down => new(0, step), _ => new() };
+        return delta.Length > 0 ? CanvasEdited(new(Page.SelectedIds.ToArray(), null, delta)) : null;
     }
 
     private Task Arrange(string op, string value)

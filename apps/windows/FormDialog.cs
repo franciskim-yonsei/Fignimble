@@ -40,21 +40,34 @@ internal sealed class FormDialog : Window
     public void Note(string text) => fields.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 0, 0, 8) });
 
-    private void Add(string label, Control control)
+    public void Add(string label, Control control)
     {
         fields.Children.Add(new Label { Content = label, Target = control, Padding = new Thickness(0, 0, 0, 3) });
         control.Margin = new Thickness(0, 0, 0, 8);
         fields.Children.Add(control);
     }
 
-    public bool Confirm(string action, Func<string?> validate)
+    public bool Confirm(string action, Func<string?> validate) => ConfirmAsync(action, () => Task.FromResult(validate()));
+
+    public bool ConfirmAsync(string action, Func<Task<string?>> apply)
     {
         fields.Children.Add(error);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 8, 0, 0) };
         var ok = new Button { Content = action, IsDefault = true, MinWidth = 75, Padding = new Thickness(8, 4, 8, 4) };
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 75, Margin = new Thickness(6, 0, 0, 0) };
-        ok.Click += (_, _) => { string? message = validate(); if (message is null) DialogResult = true; else error.Text = message; };
+        ok.Click += async (_, _) =>
+        {
+            fields.IsEnabled = false;
+            try
+            {
+                string? message = await apply();
+                if (message is null) DialogResult = true;
+                else error.Text = message;
+            }
+            catch (Exception ex) { error.Text = ex.Message; }
+            finally { fields.IsEnabled = true; }
+        };
         buttons.Children.Add(ok);
         buttons.Children.Add(cancel);
         fields.Children.Add(buttons);

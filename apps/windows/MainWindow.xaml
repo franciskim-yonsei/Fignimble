@@ -24,6 +24,7 @@
         <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
         <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
         <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">_Export…</Button>
+        <Button x:Name="MoreButton" Click="MoreClicked" Padding="8,4">More ▾</Button>
       </ToolBar>
     </ToolBarTray>
     <Border DockPanel.Dock="Bottom" BorderBrush="#D0D0D0" BorderThickness="0,1,0,0" Padding="8,4">
@@ -67,7 +68,7 @@
                         PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded" PreviewMouseMove="PanMoved"
                         LostMouseCapture="PanLost">
             <Viewbox x:Name="PageView" Margin="14" Visibility="Collapsed">
-              <local:FigureCanvas x:Name="Page" AutomationProperties.Name="Figure canvas" />
+              <local:FigureCanvas x:Name="Page" Focusable="True" AutomationProperties.Name="Figure canvas" />
             </Viewbox>
           </ScrollViewer>
         </Grid>
@@ -110,7 +111,11 @@
             </ListBox.ItemTemplate>
           </ListBox>
         </Expander>
-        <TextBlock x:Name="SourceTitle" DockPanel.Dock="Top" Padding="8" FontWeight="SemiBold" Text="Figure source" />
+        <DockPanel DockPanel.Dock="Top">
+          <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Click="EditSourceClicked" Content="Edit source…"
+                  Margin="4" Padding="6,2" />
+          <TextBlock x:Name="SourceTitle" Padding="8" FontWeight="SemiBold" Text="Figure source" />
+        </DockPanel>
         <TextBox x:Name="SourceText" IsReadOnly="True" AcceptsReturn="True" FontFamily="Consolas" FontSize="13"
                  BorderThickness="0" Padding="8" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                  AutomationProperties.Name="Figure source" />

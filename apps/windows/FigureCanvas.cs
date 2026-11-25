@@ -15,6 +15,10 @@ public sealed class FigureCanvas : FrameworkElement
     private Point? start;
     private Vector delta;
     private bool resizing;
+    private bool marquee;
+    private string[] marqueeBase = [];
+    private double? snapX, snapY;
+    internal bool SnapEnabled { get; set; } = true;
     private const double HandleSize = 2.2;
     private static readonly Brush Accent = Brushes.DodgerBlue;
     private static readonly Pen SelectionPen = new(Accent, 0.45);
@@ -27,6 +31,18 @@ public sealed class FigureCanvas : FrameworkElement
     internal FigureElement? Selection => selected.Length == 1 ? Selections.FirstOrDefault() : null;
 
     internal void Select(string? oid) => SelectIds(oid is null ? [] : [oid]);
+
+    internal string[] IncludeGroupMembers(IEnumerable<FigureElement> layers)
+    {
+        var items = layers.ToArray();
+        var ids = items.Select(e => e.Oid).ToHashSet();
+        var groups = items.Select(e => e.Group).OfType<string>().ToHashSet();
+        return (figure?.Elements ?? []).Where(e => TopLevel(e) &&
+            (ids.Contains(e.Oid) || e.Group is { } g && groups.Contains(g))).Select(e => e.Oid).ToArray();
+    }
+
+    private string[] CanvasGroup(FigureElement layer) => IncludeGroupMembers([layer])
+        .Where(id => (figure?.Elements ?? []).Any(e => e.Oid == id && Unlocked(e))).ToArray();
 
     internal void SelectIds(IEnumerable<string> ids)
     {
@@ -71,18 +87,28 @@ public sealed class FigureCanvas : FrameworkElement
         dc.DrawRectangle(bg, null, page);
         foreach (var e in figure.Elements ?? [])
         {
-            bool moving = IsDragging && !resizing && (selected.Contains(e.Oid) || e.Parent is { } id && selected.Contains(id));
+            bool moving = IsDragging && !marquee && !resizing && (selected.Contains(e.Oid) || e.Parent is { } id && selected.Contains(id));
             Vector shift = moving ? delta : default;
             DrawSprite(dc, e.Sprite, shift);
         }
         foreach (var label in figure.Labels ?? [])
-            DrawSprite(dc, label.Sprite, IsDragging && !resizing && label.Panel is { } id && selected.Contains(id) ? delta : default);
+            DrawSprite(dc, label.Sprite, IsDragging && !marquee && !resizing && label.Panel is { } id && selected.Contains(id) ? delta : default);
         foreach (var active in Selections.Where(CanHit))
         {
             Rect selectionBox = DragBox(active);
             dc.DrawRectangle(null, SelectionPen, selectionBox);
             if (selected.Length == 1 && Resizable(active)) dc.DrawRectangle(Accent, null, Handle(selectionBox));
         }
+        var guidePen = new Pen(Brushes.Teal, 0.24) { DashStyle = DashStyles.Dash };
+        foreach (var guide in figure.Guides ?? [])
+        {
+            if (guide.X is { } x) dc.DrawLine(guidePen, new Point(x, 0), new Point(x, Height));
+            if (guide.Y is { } y) dc.DrawLine(guidePen, new Point(0, y), new Point(Width, y));
+        }
+        if (snapX is { } sx) dc.DrawLine(SelectionPen, new Point(sx, 0), new Point(sx, Height));
+        if (snapY is { } sy) dc.DrawLine(SelectionPen, new Point(0, sy), new Point(Width, sy));
+        if (marquee && start is { } anchor)
+            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(28, 30, 144, 255)), SelectionPen, new Rect(anchor, anchor + delta));
         dc.Pop();
     }
 
@@ -110,18 +136,29 @@ public sealed class FigureCanvas : FrameworkElement
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
+        Focus();
         Point p = e.GetPosition(this);
-        resizing = Selection is { } current && Resizable(current) && Handle(Box(current)).Contains(p);
+        bool adding = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0;
+        resizing = !adding && Selection is { } current && Resizable(current) && Handle(Box(current)).Contains(p);
         if (!resizing)
         {
-            var hit = figure?.Elements?.LastOrDefault(el => CanHit(el) && el.Props is not { Locked: true } && HitBox(el).Contains(p));
-            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0)
+            var hit = figure?.Elements?.LastOrDefault(el => CanHit(el) && Unlocked(el) && HitBox(el).Contains(p));
+            if (hit is null)
             {
-                if (hit is not null) SelectIds(selected.Contains(hit.Oid) ? selected.Where(id => id != hit.Oid) : selected.Append(hit.Oid));
+                if (!adding) SelectIds([]);
+                marqueeBase = selected;
+                if (CaptureMouse()) { marquee = true; start = p; delta = default; }
                 e.Handled = true;
                 return;
             }
-            if (hit is null || !selected.Contains(hit.Oid)) Select(hit?.Oid);
+            var group = CanvasGroup(hit);
+            if (adding)
+            {
+                SelectIds(selected.Contains(hit.Oid) ? selected.Except(group) : selected.Concat(group));
+                e.Handled = true;
+                return;
+            }
+            if (!selected.Contains(hit.Oid)) SelectIds(group);
         }
         if (selected.Length > 0 && Selections.All(Movable) && CaptureMouse()) { start = p; delta = default; }
         InvalidateVisual();
@@ -131,7 +168,7 @@ public sealed class FigureCanvas : FrameworkElement
     protected override void OnMouseMove(MouseEventArgs e)
     {
         Point p = e.GetPosition(this);
-        if (start is { } from) { delta = p - from; InvalidateVisual(); }
+        if (start is { } from) { UpdateDrag(from, p); InvalidateVisual(); }
         Cursor = (IsDragging && resizing) || (Selection is { } active && Resizable(active) && Handle(Box(active)).Contains(p))
             ? Cursors.SizeNWSE : IsDragging || (figure?.Elements?.Any(el => Movable(el) && HitBox(el).Contains(p)) ?? false)
                 ? Cursors.SizeAll : Cursors.Arrow;
@@ -142,11 +179,11 @@ public sealed class FigureCanvas : FrameworkElement
         CanvasEdit? edit = null;
         if (start is { } from)
         {
-            delta = e.GetPosition(this) - from;
-            if (Math.Abs(delta.X) >= 0.15 || Math.Abs(delta.Y) >= 0.15)
+            UpdateDrag(from, e.GetPosition(this));
+            if (!marquee && (Math.Abs(delta.X) >= 0.15 || Math.Abs(delta.Y) >= 0.15))
                 edit = new(selected, resizing && Selection is { } active ? DragBox(active) : null, delta);
         }
-        start = null;
+        ResetDrag();
         ReleaseMouseCapture();
         InvalidateVisual();
         if (edit is not null) EditCompleted?.Invoke(edit);
@@ -155,14 +192,69 @@ public sealed class FigureCanvas : FrameworkElement
 
     protected override void OnLostMouseCapture(MouseEventArgs e)
     {
-        start = null;
+        ResetDrag();
         InvalidateVisual();
+    }
+
+    private void ResetDrag()
+    {
+        start = null;
+        marquee = false;
+        marqueeBase = [];
+        snapX = snapY = null;
+    }
+
+    private void UpdateDrag(Point from, Point to)
+    {
+        delta = to - from;
+        snapX = snapY = null;
+        if (marquee)
+        {
+            if (delta.Length < 0.4) { SelectIds(marqueeBase); return; }
+            var area = new Rect(from, to);
+            var hits = (figure?.Elements ?? []).Where(e => CanHit(e) && Unlocked(e) && area.IntersectsWith(Box(e)));
+            SelectIds(marqueeBase.Concat(hits.SelectMany(CanvasGroup)));
+            return;
+        }
+        if (resizing || !SnapEnabled || delta.Length < 0.15 || Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) return;
+        var moving = Selections;
+        if (moving.Length == 0) return;
+        Rect union = Box(moving[0]);
+        foreach (var layer in moving.Skip(1)) union.Union(Box(layer));
+        var targets = (figure?.Elements ?? []).Where(e => CanHit(e) && !selected.Contains(e.Oid)).Select(Box).ToArray();
+        var guides = figure?.Guides ?? [];
+        var xs = targets.SelectMany(b => Axis(b.Left, b.Right)).Concat(Axis(0, Width)).Concat(guides.Select(g => g.X).OfType<double>());
+        var ys = targets.SelectMany(b => Axis(b.Top, b.Bottom)).Concat(Axis(0, Height)).Concat(guides.Select(g => g.Y).OfType<double>());
+        double scale = PresentationSource.FromVisual(this) is null ? 1 : (PointToScreen(new Point(1, 0)) - PointToScreen(new Point())).Length;
+        double tolerance = Math.Min(3, 6 / Math.Max(0.01, scale));
+        (double dx, snapX) = Snap(Axis(union.Left + delta.X, union.Right + delta.X), xs, tolerance);
+        (double dy, snapY) = Snap(Axis(union.Top + delta.Y, union.Bottom + delta.Y), ys, tolerance);
+        delta += new Vector(dx, dy);
+    }
+
+    private static double[] Axis(double start, double end) => [start, (start + end) / 2, end];
+
+    internal static (double Delta, double? Target) Snap(IEnumerable<double> source, IEnumerable<double> targets, double tolerance)
+    {
+        double best = tolerance, delta = 0;
+        double? target = null;
+        double[] origins = source.ToArray();
+        foreach (double at in targets)
+            foreach (double from in origins)
+            {
+                double diff = at - from;
+                if (Math.Abs(diff) >= best) continue;
+                best = Math.Abs(diff);
+                delta = diff;
+                target = at;
+            }
+        return (delta, target);
     }
 
     private Rect DragBox(FigureElement active)
     {
         Rect b = Box(active);
-        if (!IsDragging) return b;
+        if (!IsDragging || marquee) return b;
         if (!resizing) { b.Offset(delta); return b; }
         return new Rect(b.Location, new Size(Math.Max(1, b.Width + delta.X), Math.Max(1, b.Height + delta.Y)));
     }

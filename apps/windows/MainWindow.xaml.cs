@@ -24,7 +24,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         reloadTimer.Tick += async (_, _) =>
         {
-            if (busy || Page.IsDragging) return;
+            if (busy || editingSource || Page.IsDragging) return;
             reloadTimer.Stop();
             await Reload();
         };
@@ -81,6 +81,8 @@ public partial class MainWindow : Window
         RedoButton.IsEnabled = !busy && state?.CanRedo == true;
         ExportButton.IsEnabled = !busy && validFigure;
         Page.IsEnabled = !busy && validFigure;
+        MoreButton.IsEnabled = !busy && project is not null;
+        EditSourceButton.IsEnabled = !busy && currentRender is not null;
     }
 
     private async void OpenClicked(object sender, RoutedEventArgs e)
@@ -230,8 +232,8 @@ public partial class MainWindow : Window
     private Task ExportFigure(string figure, string path, int dpi, string journal) => During("Exporting figure…", async () =>
     {
         string format = Path.GetExtension(path).ToLowerInvariant();
-        if (format is not (".pdf" or ".svg" or ".png" or ".tiff"))
-            throw new ArgumentException("Choose a .pdf, .svg, .png, or .tiff filename.");
+        if (format is not (".pdf" or ".svg" or ".png" or ".tiff" or ".pptx"))
+            throw new ArgumentException("Choose a .pdf, .svg, .png, .tiff, or .pptx filename.");
         var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..], dpi,
             journal = string.IsNullOrEmpty(journal) ? null : journal });
         if (result.Warnings is { Length: > 0 } warnings)
@@ -246,6 +248,8 @@ public partial class MainWindow : Window
     private async void HandleKey(object sender, KeyEventArgs e)
     {
         var modifiers = Keyboard.Modifiers;
+        if (!busy && Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase &&
+            FigureShortcut(e.Key, modifiers) is { } shortcut) { e.Handled = true; await shortcut; return; }
         if (e.Key == Key.Escape && !busy && !Page.IsDragging && Page.SelectedIds.Count > 0)
         {
             e.Handled = true;
