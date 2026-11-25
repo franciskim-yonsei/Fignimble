@@ -819,11 +819,20 @@ class Session:
                         new[i], new[j] = new[j], new[i]
             if [id(s) for s in new] == [id(s) for s in order]:
                 continue
-            texts = {}
-            for st in order:
-                a0, b0 = src.stmt_span(st)
-                texts[id(st)] = src.text[a0:b0]
-            plan.add(path, [(*src.stmt_span(old), texts[id(nw)]) for old, nw in zip(order, new)])
+            spans = {id(st): src.stmt_span(st) for st in order}
+            texts = {k: src.text[a0:b0] for k, (a0, b0) in spans.items()}
+            patches, lines, delta = [], [], 0
+            for old, nw in zip(order, new):
+                start, end = spans[id(old)]
+                code = texts[id(nw)]
+                patches.append((start, end, code))
+                if id(nw) in chosen:
+                    site = self._info(data, stm[id(nw)][1])["site"]
+                    offset = site["line"] - 1 - src.text.count("\n", 0, spans[id(nw)][0])
+                    lines.append(1 + src.text.count("\n", 0, start) + delta + offset)
+                delta += code.count("\n") - texts[id(old)].count("\n")
+            plan.add(path, patches)
+            plan.inserted[path] = lines
         return {"front": "Bring to Front", "back": "Send to Back", "forward": "Bring Forward",
                 "backward": "Send Backward"}[how]
 

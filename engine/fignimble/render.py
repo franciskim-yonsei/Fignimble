@@ -1408,7 +1408,7 @@ class Renderer:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if fmt == "png" and cmyk:
             raise ValueError("PNG has no CMYK; export a TIFF or a PDF")
-        journal = (journal or fig.style.props.get("journal") or None)
+        journal = journal or fig.props.get("journal") or None
         poster = fig.props.get("poster") and not journal
         need = dict(journals.POSTER_DPI) if poster else journals.dpi(journal)
         kind = "combination" if doc[0].get_image_info() else "line"

@@ -200,6 +200,41 @@ def test_order(session):
     assert fig_text(session) == before
 
 
+def test_reorder_reports_new_selection_for_multiline_element(tmp_path):
+    (tmp_path / "fig1.py").write_text(
+        'from fignimble import Figure\nfig = Figure(90, 60)\n'
+        'fig.rect(\n    5, 5, 30, 25,\n    fill="red",\n)\n\nfig.rect(8, 8, 20, 15, fill="blue")\n',
+        encoding="utf-8",
+    )
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        r = edit(s, op="order", how="front", oids=["0"])
+        assert r["select"] == ["1"]
+        assert r["figure"]["elements"][-1]["props"]["fill"] == "red"
+    finally:
+        s.close()
+
+
+def test_figure_journal_drives_default_export(tmp_path):
+    from PIL import Image
+
+    (tmp_path / "fig1.py").write_text(
+        'from fignimble import Figure, Style\n'
+        'fig = Figure(width=25.4, height=25.4, style=Style.journal("nature"), journal="cell")\n'
+        'fig.rect(5, 5, 15, 15, fill="blue")\n', encoding="utf-8",
+    )
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        path = tmp_path / "fig1.tiff"
+        r = s.export({"figure": "fig1", "path": str(path), "dpi": 150})
+        assert r["resolution"]["journal"] == "cell"
+        with Image.open(path) as im:
+            assert im.info["dpi"] == (1000, 1000)
+            assert im.size == (1000, 1000)
+    finally:
+        s.close()
+
+
 def test_align_distribute(session):
     edit(session, op="align", oids=["0", "1", "2"], how="top")
     edit(session, op="align", oids=["3", "4"], how="left", to="figure")

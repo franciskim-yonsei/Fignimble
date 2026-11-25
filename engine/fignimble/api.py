@@ -545,7 +545,7 @@ class Figure:
         if style is None:
             style = Style.journal(journal) if journal else Style()
             style.site = None                       # made here, not in the user's code
-        self.props = dict(width=width, height=height, background=background, journal=journal or style.journal,
+        self.props = dict(width=width, height=height, background=background, journal=journal or style.props.get("journal"),
                           columns=columns, poster=poster.lower() if poster else None, landscape=landscape,
                           margin=margin)
         self.style = style
