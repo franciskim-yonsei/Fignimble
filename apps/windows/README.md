@@ -29,6 +29,10 @@ Copy-Item -Recurse examples\demo $demo
 Start-Process .\apps\windows\bin\Debug\net10.0-windows\Fignimble.exe -ArgumentList ('"' + $demo + '"')
 ```
 
+## Workspace
+
+The left sidebar has figure thumbnails and layers; the right inspector shows page settings or actions for the current selection. Drag the dividers to resize the panels. The center drawer groups syntax-highlighted **Code**, **Preflight**, and **Terminal** tabs. Use **Hide drawer** for more canvas room; export warnings open the Preflight tab automatically.
+
 ## Create a figure without writing a script
 
 1. Choose **New project**, pick a shared journal style, and create or select an empty folder. **New figure** adds another figure with dimensions you can set in millimeters. **Journal width** sets the current page width and journal for preflight and export without replacing its plot style.

@@ -9,17 +9,12 @@ public partial class MainWindow
 
     private void TerminalClicked(object sender, RoutedEventArgs e) => ToggleTerminal();
 
+    private bool TerminalRequested => DrawerTabs.Visibility == Visibility.Visible && DrawerTabs.SelectedItem == TerminalTab;
+
     private void ToggleTerminal()
     {
-        if (TerminalDrawer.Visibility == Visibility.Visible)
-        {
-            TerminalDrawer.Visibility = Visibility.Collapsed; // Keep the shell alive while hidden.
-            return;
-        }
         if (project is null || engine is null) return;
-        TerminalDrawer.Visibility = Visibility.Visible;
-        if (terminalFolder != project) StartShell();
-        else terminal?.FocusTerminal();
+        ShowDrawer(TerminalRequested ? CodeTab : TerminalTab);
     }
 
     private void RestartShellClicked(object sender, RoutedEventArgs e) => StartShell();

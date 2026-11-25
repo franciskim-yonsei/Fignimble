@@ -91,7 +91,7 @@ public partial class MainWindow
         await client.CallAsync<JsonElement>("open", new { project = mirror });
         project = mirror;
         Title = $"Fignimble — {host}:{path}";
-        if (TerminalDrawer.Visibility == Visibility.Visible) StartShell();
+        if (TerminalRequested) StartShell();
         await RefreshProject(null);
     });
 

@@ -11,7 +11,7 @@ public partial class MainWindow
     private bool syncingLayers;
     private double zoom = 1;
     private (Point Point, double X, double Y)? pan;
-    private sealed record LayerRow(string Oid, string Title);
+    private sealed record LayerRow(string Oid, string Title, string Glyph);
 
     private void RefreshLayers()
     {
@@ -29,7 +29,12 @@ public partial class MainWindow
             if (e.Group is { } group) title += $" [{group}]";
             if (e.Props is { Hidden: true }) title += " [hidden]";
             if (e.Props is { Locked: true }) title += " [locked]";
-            return new LayerRow(e.Oid, title);
+            string glyph = e.Kind switch
+            {
+                "image" => "\uEB9F", "panel" => "\uE9D9", "text" => "\uE8D2", "table" => "\uE809",
+                "line" => "\uE7AD", "layout" or "figure" => "\uECA5", _ => "\uE91F"
+            };
+            return new LayerRow(e.Oid, title, glyph);
         }).ToArray();
         syncingLayers = true;
         try
@@ -107,7 +112,7 @@ public partial class MainWindow
 
     private void ArrangeClicked(object sender, RoutedEventArgs e)
     {
-        var menu = new ContextMenu { PlacementTarget = ArrangeButton, Placement = PlacementMode.Bottom };
+        var menu = new ContextMenu { PlacementTarget = sender as Button ?? ArrangeButton, Placement = PlacementMode.Bottom };
         foreach (var (text, value) in new[] { ("Align left", "left"), ("Align horizontal centers", "hcenter"),
             ("Align right", "right"), ("Align top", "top"), ("Align vertical centers", "vcenter"), ("Align bottom", "bottom") })
         {
@@ -244,6 +249,7 @@ public partial class MainWindow
         double scale = zoom * Math.Min(Math.Max(1, Viewport.ActualWidth - 30) / w, Math.Max(1, Viewport.ActualHeight - 30) / h);
         PageView.Width = w * scale;
         PageView.Height = h * scale;
+        PageView.Effect = zoom <= 1 ? PaperShadow : null;
         ZoomText.Text = zoom == 1 ? "Fit" : $"{zoom:P0} of fit";
     }
 }

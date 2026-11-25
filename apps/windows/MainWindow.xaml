@@ -2,141 +2,213 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Fignimble.Windows"
-        Title="Fignimble for Windows" Width="1120" Height="760" MinWidth="680" MinHeight="450"
-        PreviewKeyDown="HandleKey">
-  <DockPanel>
-    <ToolBarTray DockPanel.Dock="Top" IsLocked="True">
-      <ToolBar Band="0" BandIndex="0">
-        <Button x:Name="NewProjectButton" Click="NewProjectClicked" Padding="8,4">_New project…</Button>
-        <Button x:Name="OpenButton" Click="OpenClicked" Padding="8,4">_Open project…</Button>
-        <Button x:Name="RemoteButton" Click="RemoteClicked" Padding="8,4">SSH…</Button>
-        <Separator />
-        <Label Target="{Binding ElementName=Figures}" Content="_Figure:" />
-        <ComboBox x:Name="Figures" Width="130" SelectionChanged="FigureChanged" AutomationProperties.Name="Figure" />
-        <Button x:Name="NewFigureButton" Click="NewFigureClicked" Padding="8,4">New figure…</Button>
-        <Button x:Name="ReloadButton" Click="ReloadClicked" Padding="8,4">Reload</Button>
-      </ToolBar>
-      <ToolBar Band="1" BandIndex="0">
-        <Button x:Name="ImportButton" Click="ImportClicked" Padding="8,4" ToolTip="Add a Python panel, image, or table">_Import…</Button>
-        <Button x:Name="SampleButton" Click="SampleClicked" Padding="8,4" ToolTip="Insert a self-contained matplotlib example">Add _sample plot</Button>
-        <Button x:Name="AnnotationButton" Click="AnnotationClicked" Padding="8,4">Annotate…</Button>
-        <Button x:Name="ArrangeButton" Click="ArrangeClicked" Padding="8,4">Arrange ▾</Button>
-        <Separator />
-        <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
-        <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
-        <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">_Export…</Button>
-        <Button x:Name="MoreButton" Click="MoreClicked" Padding="8,4">More ▾</Button>
-        <Button x:Name="TerminalButton" Click="TerminalClicked" Padding="8,4">Terminal</Button>
-      </ToolBar>
-    </ToolBarTray>
-    <Border DockPanel.Dock="Bottom" BorderBrush="#D0D0D0" BorderThickness="0,1,0,0" Padding="8,4">
-      <TextBlock x:Name="Status" TextWrapping="Wrap" AutomationProperties.Name="Status" />
+        xmlns:edit="http://icsharpcode.net/sharpdevelop/avalonedit"
+        Title="Fignimble for Windows" Width="1350" Height="860" MinWidth="770" MinHeight="530"
+        FontFamily="Segoe UI" FontSize="12" UseLayoutRounding="True" PreviewKeyDown="HandleKey">
+  <Window.Resources><ResourceDictionary Source="WorkspaceTheme.xaml"/></Window.Resources>
+  <DockPanel Background="{StaticResource WorkspacePanel}" TextElement.Foreground="{StaticResource WorkspaceInk}">
+    <Border DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,0,0,1">
+      <WrapPanel Margin="9,5" VerticalAlignment="Center">
+        <TextBlock Text="FIGNIMBLE" FontWeight="Bold" Foreground="{StaticResource WorkspaceAccent}" Margin="4,0,10,0" VerticalAlignment="Center"/>
+        <Button x:Name="NewProjectButton" Style="{StaticResource ToolButton}" Click="NewProjectClicked" Content="_New project…"/>
+        <Button x:Name="OpenButton" Style="{StaticResource ToolButton}" Click="OpenClicked" Content="_Open…" ToolTip="Open a local figure project"/>
+        <Button x:Name="RemoteButton" Style="{StaticResource ToolButton}" Click="RemoteClicked" Content="SSH ▾"/>
+        <Border Width="1" Margin="7,4" Background="{StaticResource WorkspaceLine}"/>
+        <Button x:Name="ImportButton" Style="{StaticResource ToolButton}" Click="ImportClicked" Content="_Import…" ToolTip="Add a Python panel, image, or table"/>
+        <Button x:Name="SampleButton" Style="{StaticResource ToolButton}" Click="SampleClicked" Content="_Sample plot" ToolTip="Insert a self-contained matplotlib example"/>
+        <Button x:Name="AnnotationButton" Style="{StaticResource ToolButton}" Click="AnnotationClicked" Content="Annotate…"/>
+        <Button x:Name="ArrangeButton" Style="{StaticResource ToolButton}" Click="ArrangeClicked" Content="Arrange ▾"/>
+        <Border Width="1" Margin="7,4" Background="{StaticResource WorkspaceLine}"/>
+        <Button x:Name="UndoButton" Style="{StaticResource IconButton}" Click="UndoClicked" ToolTip="Undo (Ctrl+Z)" AutomationProperties.Name="Undo" Content="&#xE7A7;"/>
+        <Button x:Name="RedoButton" Style="{StaticResource IconButton}" Click="RedoClicked" ToolTip="Redo (Ctrl+Y)" AutomationProperties.Name="Redo" Content="&#xE7A6;"/>
+        <Button x:Name="ReloadButton" Style="{StaticResource IconButton}" Click="ReloadClicked" ToolTip="Reload project" AutomationProperties.Name="Reload project" Content="&#xE72C;"/>
+        <Button x:Name="MoreButton" Style="{StaticResource ToolButton}" Click="MoreClicked" Content="More ▾"/>
+        <Button x:Name="TerminalButton" Style="{StaticResource ToolButton}" Click="TerminalClicked" Content="Terminal"/>
+        <Button x:Name="ExportButton" Margin="7,0,0,0" Click="ExportClicked" Content="_Export…" Tag="primary" Foreground="White" Background="{StaticResource WorkspaceAccent}" BorderBrush="#246B6B"/>
+      </WrapPanel>
     </Border>
-    <DockPanel x:Name="TerminalDrawer" DockPanel.Dock="Bottom" Height="250" Visibility="Collapsed" Background="#1B1B1E">
-      <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Background="#E6E8EC">
-        <TextBlock Text="Project terminal" FontWeight="SemiBold" Margin="8,4" />
-        <Button Content="Restart shell" Click="RestartShellClicked" Padding="6,2" Margin="3" />
-        <Button Content="Hide" Click="TerminalClicked" Padding="6,2" Margin="3" />
-      </StackPanel>
-      <ContentControl x:Name="TerminalHost" />
-    </DockPanel>
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,1,0,0" Padding="10,5">
+      <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="{StaticResource WorkspaceMuted}" AutomationProperties.Name="Status"/>
+    </Border>
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="175" MinWidth="120" />
-        <ColumnDefinition Width="5" />
-        <ColumnDefinition Width="*" MinWidth="170" />
-        <ColumnDefinition Width="5" />
-        <ColumnDefinition Width="340" MinWidth="190" />
+        <ColumnDefinition Width="196" MinWidth="125"/>
+        <ColumnDefinition Width="4"/>
+        <ColumnDefinition Width="*" MinWidth="280"/>
+        <ColumnDefinition Width="4"/>
+        <ColumnDefinition Width="237" MinWidth="172"/>
       </Grid.ColumnDefinitions>
-      <DockPanel Grid.Column="0" Margin="6">
-        <TextBlock DockPanel.Dock="Top" Text="Layers · front to back" FontWeight="SemiBold" Margin="0,2,0,5" />
-        <WrapPanel DockPanel.Dock="Bottom" Margin="0,5,0,0">
-          <Button x:Name="FrontButton" Click="LayerButtonClicked" Tag="front" Content="Front" Padding="4,2" />
-          <Button x:Name="ForwardButton" Click="LayerButtonClicked" Tag="forward" Content="Up" Padding="4,2" />
-          <Button x:Name="BackwardButton" Click="LayerButtonClicked" Tag="backward" Content="Down" Padding="4,2" />
-          <Button x:Name="BackButton" Click="LayerButtonClicked" Tag="back" Content="Back" Padding="4,2" />
-          <Button x:Name="VisibilityButton" Click="VisibilityClicked" Content="Hide" Padding="4,2" />
-          <Button x:Name="LockButton" Click="LockClicked" Content="Lock" Padding="4,2" />
-        </WrapPanel>
-        <ListBox x:Name="Layers" SelectionMode="Extended" SelectionChanged="LayersChanged"
-                 MouseDoubleClick="LayersDoubleClicked" DisplayMemberPath="Title" AutomationProperties.Name="Layers"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
-      </DockPanel>
-      <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#D0D0D0" />
-      <DockPanel Grid.Column="2" Background="#E6E8EC">
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="4">
-          <Button Click="ZoomClicked" Tag="out" Content="−" Width="30" AutomationProperties.Name="Zoom out" />
-          <Button Click="ZoomClicked" Tag="fit" Content="Fit" Width="40" />
-          <Button Click="ZoomClicked" Tag="in" Content="+" Width="30" AutomationProperties.Name="Zoom in" />
-          <TextBlock x:Name="ZoomText" Margin="8,2,0,0" Text="Fit" />
-        </StackPanel>
-        <Grid ClipToBounds="True">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <Grid.RowDefinitions><RowDefinition Height="20"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <local:FigureRuler x:Name="TopRuler" Grid.Column="1" Cursor="SizeWE" ToolTip="Drag out a vertical guide; drag an existing mark to move it."
-                             MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
-          <local:FigureRuler x:Name="LeftRuler" Grid.Row="1" Vertical="True" Cursor="SizeNS" ToolTip="Drag out a horizontal guide; drag an existing mark to move it."
-                             MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
-          <TextBlock x:Name="EmptyCanvas" Grid.Row="1" Grid.Column="1" Text="Open a folder containing a Fignimble figure (.py)."
-                     HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="16" />
-          <ScrollViewer x:Name="Viewport" Grid.Row="1" Grid.Column="1" ScrollChanged="ViewportScrolled"
-                        HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                        SizeChanged="ViewportResized" PreviewMouseWheel="ViewportWheel" PanningMode="Both"
-                        PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded" PreviewMouseMove="PanMoved"
-                        LostMouseCapture="PanLost">
-            <Viewbox x:Name="PageView" Margin="14" Visibility="Collapsed">
-              <local:FigureCanvas x:Name="Page" Focusable="True" AutomationProperties.Name="Figure canvas" />
-            </Viewbox>
-          </ScrollViewer>
-        </Grid>
-      </DockPanel>
-      <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="#D0D0D0" />
-      <DockPanel Grid.Column="4">
-        <GroupBox x:Name="Geometry" DockPanel.Dock="Top" Header="Page geometry (mm)" Margin="8,6,8,4">
-          <StackPanel Margin="6">
-            <UniformGrid Columns="2">
-              <StackPanel x:Name="XField" Margin="3">
-                <Label Target="{Binding ElementName=XInput}" Content="X" Padding="0,0,0,3" />
-                <TextBox x:Name="XInput" AutomationProperties.Name="X in millimeters" />
-              </StackPanel>
-              <StackPanel x:Name="YField" Margin="3">
-                <Label Target="{Binding ElementName=YInput}" Content="Y" Padding="0,0,0,3" />
-                <TextBox x:Name="YInput" AutomationProperties.Name="Y in millimeters" />
-              </StackPanel>
-              <StackPanel Margin="3">
-                <Label Target="{Binding ElementName=WidthInput}" Content="Width" Padding="0,0,0,3" />
-                <TextBox x:Name="WidthInput" AutomationProperties.Name="Width in millimeters" />
-              </StackPanel>
-              <StackPanel Margin="3">
-                <Label Target="{Binding ElementName=HeightInput}" Content="Height" Padding="0,0,0,3" />
-                <TextBox x:Name="HeightInput" AutomationProperties.Name="Height in millimeters" />
-              </StackPanel>
-            </UniformGrid>
-            <WrapPanel Margin="3,6,3,2">
-              <Button x:Name="ApplyButton" Click="ApplyGeometryClicked" Content="Apply" Padding="8,3" />
-              <Button x:Name="FitButton" Click="FitClicked" Content="Fit page to content" Padding="8,3" Margin="6,0,0,0" />
-              <Button x:Name="PresetButton" Click="PresetClicked" Content="Journal width…" Padding="8,3" Margin="6,0,0,0" />
-              <Button x:Name="DetailsButton" Click="DetailsClicked" Content="Edit…" Padding="8,3" Margin="6,0,0,0" />
-              <Button x:Name="RemoveButton" Click="RemoveClicked" Content="Remove" Padding="8,3" Margin="6,0,0,0" />
-            </WrapPanel>
-          </StackPanel>
-        </GroupBox>
-        <Expander x:Name="Checks" DockPanel.Dock="Top" Header="Preflight" Margin="8,3">
-          <ListBox x:Name="Warnings" MaxHeight="115" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Preflight messages">
+      <Grid Grid.Column="0">
+        <Grid.RowDefinitions><RowDefinition Height="2*" MinHeight="110"/><RowDefinition Height="4"/><RowDefinition Height="3*" MinHeight="130"/></Grid.RowDefinitions>
+        <DockPanel Margin="8,6,8,4">
+          <DockPanel DockPanel.Dock="Top" Margin="4,2,0,4" LastChildFill="False">
+            <Button x:Name="NewFigureButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="NewFigureClicked"
+                    Content="+" MinWidth="28" ToolTip="New figure" AutomationProperties.Name="New figure"/>
+            <TextBlock DockPanel.Dock="Left" Text="FIGURES" Style="{StaticResource SectionTitle}" VerticalAlignment="Center"/>
+          </DockPanel>
+          <Grid>
+            <TextBlock x:Name="FiguresEmpty" Margin="6,12" Text="Project figures will appear here." Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap"/>
+            <ListBox x:Name="Figures" SelectionChanged="FigureChanged" AutomationProperties.Name="Figures" Background="Transparent" BorderThickness="0"
+                     ItemContainerStyle="{StaticResource WorkspaceRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel>
+                    <Border Height="77" Background="#E4E8E7" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="1" CornerRadius="3">
+                      <Image Source="{Binding Preview}" Margin="4" Stretch="Uniform"/>
+                    </Border>
+                    <DockPanel Margin="2,5,2,0">
+                      <TextBlock DockPanel.Dock="Right" Text="{Binding Indicator}" Foreground="#815527" Margin="4,0,0,0"/>
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </DockPanel>
+        <GridSplitter Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        <DockPanel Grid.Row="2" Margin="8,6,8,5">
+          <TextBlock DockPanel.Dock="Top" Text="LAYERS" Style="{StaticResource SectionTitle}" Margin="4,5,0,7" ToolTip="Front to back"/>
+          <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+            <Button x:Name="FrontButton" Style="{StaticResource ToolButton}" Click="LayerButtonClicked" Tag="front" Content="Front" ToolTip="Bring to front"/>
+            <Button x:Name="ForwardButton" Style="{StaticResource ToolButton}" Click="LayerButtonClicked" Tag="forward" Content="↑" ToolTip="Bring forward" AutomationProperties.Name="Bring forward"/>
+            <Button x:Name="BackwardButton" Style="{StaticResource ToolButton}" Click="LayerButtonClicked" Tag="backward" Content="↓" ToolTip="Send backward" AutomationProperties.Name="Send backward"/>
+            <Button x:Name="BackButton" Style="{StaticResource ToolButton}" Click="LayerButtonClicked" Tag="back" Content="Back" ToolTip="Send to back"/>
+            <Button x:Name="VisibilityButton" Style="{StaticResource ToolButton}" Click="VisibilityClicked" Content="Hide"/>
+            <Button x:Name="LockButton" Style="{StaticResource ToolButton}" Click="LockClicked" Content="Lock"/>
+          </WrapPanel>
+          <ListBox x:Name="Layers" SelectionMode="Extended" SelectionChanged="LayersChanged" MouseDoubleClick="LayersDoubleClicked"
+                   ItemContainerStyle="{StaticResource WorkspaceRow}" AutomationProperties.Name="Layers" ToolTip="Layers, front to back"
+                   Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>
-              <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" /></DataTemplate>
+              <DataTemplate>
+                <DockPanel ToolTip="{Binding Title}">
+                  <TextBlock DockPanel.Dock="Left" Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource WorkspaceMuted}" Width="20" VerticalAlignment="Center"/>
+                  <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                </DockPanel>
+              </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
-        </Expander>
-        <DockPanel DockPanel.Dock="Top">
-          <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Click="EditSourceClicked" Content="Edit source…"
-                  Margin="4" Padding="6,2" />
-          <TextBlock x:Name="SourceTitle" Padding="8" FontWeight="SemiBold" Text="Figure source" />
         </DockPanel>
-        <TextBox x:Name="SourceText" IsReadOnly="True" AcceptsReturn="True" FontFamily="Consolas" FontSize="13"
-                 BorderThickness="0" Padding="8" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                 AutomationProperties.Name="Figure source" />
-      </DockPanel>
+      </Grid>
+      <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch"/>
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="*" MinHeight="155"/>
+          <RowDefinition x:Name="DrawerSplit" Height="4"/>
+          <RowDefinition x:Name="DrawerRow" Height="185" MinHeight="75"/>
+        </Grid.RowDefinitions>
+        <DockPanel Background="{StaticResource WorkspaceCanvas}">
+          <Border DockPanel.Dock="Bottom" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="6,2">
+              <Button x:Name="DrawerButton" DockPanel.Dock="Right" Click="ToggleDrawerClicked" Style="{StaticResource ToolButton}" Content="Hide drawer" ToolTip="Toggle code, preflight, and terminal drawer"/>
+              <TextBlock x:Name="CanvasSize" DockPanel.Dock="Left" Foreground="{StaticResource WorkspaceMuted}" VerticalAlignment="Center" Margin="4,0"/>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Click="ZoomClicked" Tag="out" Style="{StaticResource ToolButton}" Content="−" Width="30" AutomationProperties.Name="Zoom out"/>
+                <Button Click="ZoomClicked" Tag="fit" Style="{StaticResource ToolButton}" Content="Fit" Width="40"/>
+                <Button Click="ZoomClicked" Tag="in" Style="{StaticResource ToolButton}" Content="+" Width="30" AutomationProperties.Name="Zoom in"/>
+                <TextBlock x:Name="ZoomText" Text="Fit" Foreground="{StaticResource WorkspaceMuted}" Margin="7,0,2,0" VerticalAlignment="Center"/>
+              </StackPanel>
+            </DockPanel>
+          </Border>
+          <Grid ClipToBounds="True">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="20"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Border Background="{StaticResource WorkspaceBar}"/>
+            <local:FigureRuler x:Name="TopRuler" Grid.Column="1" Cursor="SizeWE" ToolTip="Drag out a vertical guide; drag an existing mark to move it."
+                               MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
+            <local:FigureRuler x:Name="LeftRuler" Grid.Row="1" Vertical="True" Cursor="SizeNS" ToolTip="Drag out a horizontal guide; drag an existing mark to move it."
+                               MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
+            <ScrollViewer x:Name="Viewport" Grid.Row="1" Grid.Column="1" ScrollChanged="ViewportScrolled"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="ViewportResized"
+                          PreviewMouseWheel="ViewportWheel" PanningMode="Both" PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded"
+                          PreviewMouseMove="PanMoved" LostMouseCapture="PanLost">
+              <Viewbox x:Name="PageView" Margin="14" Visibility="Collapsed">
+                <local:FigureCanvas x:Name="Page" Focusable="True" AutomationProperties.Name="Figure canvas"/>
+              </Viewbox>
+            </ScrollViewer>
+            <Border x:Name="EmptyCanvasCard" Grid.Row="1" Grid.Column="1" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Margin="20" Padding="22,19" CornerRadius="7" Background="{StaticResource WorkspacePanel}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="1">
+              <StackPanel>
+                <TextBlock Text="Figure workspace" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,5"/>
+                <TextBlock x:Name="EmptyCanvas" Width="230" Text="Open a local or SSH project, or start a new one." Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap" TextAlignment="Center"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+        </DockPanel>
+        <GridSplitter x:Name="DrawerSplitter" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        <TabControl x:Name="DrawerTabs" Grid.Row="2" SelectionChanged="DrawerTabChanged" BorderThickness="0" Background="{StaticResource WorkspacePanel}" Padding="0">
+          <TabItem x:Name="CodeTab" Header="Code">
+            <DockPanel Background="White">
+              <DockPanel DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}">
+                <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="EditSourceClicked" Content="Edit source…" Margin="4,0"/>
+                <TextBlock x:Name="SourceTitle" Margin="10,0" VerticalAlignment="Center" Foreground="{StaticResource WorkspaceMuted}" Text="Figure source"/>
+              </DockPanel>
+              <edit:TextEditor x:Name="SourceText" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Background="White"
+                               Padding="6" ShowLineNumbers="True" LineNumbersForeground="{StaticResource WorkspaceMuted}"
+                               HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Figure source"/>
+            </DockPanel>
+          </TabItem>
+          <TabItem x:Name="PreflightTab" Header="Preflight">
+            <ListBox x:Name="Warnings" BorderThickness="0" ItemContainerStyle="{StaticResource WorkspaceRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Preflight messages">
+              <ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate>
+            </ListBox>
+          </TabItem>
+          <TabItem x:Name="TerminalTab" Header="Terminal">
+            <DockPanel x:Name="TerminalDrawer" Background="#1B1B1E">
+              <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" Margin="0,0,0,1">
+                <TextBlock Text="Project shell" Foreground="{StaticResource WorkspaceMuted}" Margin="10,0" VerticalAlignment="Center"/>
+                <Button Content="Restart shell" Click="RestartShellClicked" Style="{StaticResource ToolButton}"/>
+              </StackPanel>
+              <ContentControl x:Name="TerminalHost"/>
+            </DockPanel>
+          </TabItem>
+        </TabControl>
+      </Grid>
+      <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch"/>
+      <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="12,12,12,8">
+          <TextBlock Text="INSPECTOR" Style="{StaticResource SectionTitle}"/>
+          <TextBlock x:Name="InspectorTitle" Text="Page" FontSize="19" FontWeight="SemiBold" Margin="0,4,0,1" TextTrimming="CharacterEllipsis"/>
+          <TextBlock x:Name="InspectorHint" Text="Geometry and settings" Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap"/>
+          <Border Height="1" Background="{StaticResource WorkspaceLine}" Margin="0,12"/>
+          <GroupBox x:Name="Geometry" Header="Geometry (mm)" BorderThickness="0" FontWeight="SemiBold" Padding="0">
+            <StackPanel Margin="0,6,0,0" TextElement.FontWeight="Normal">
+              <UniformGrid x:Name="GeometryInputs" Columns="2">
+                <StackPanel x:Name="XField" Margin="0,0,5,6">
+                  <Label Target="{Binding ElementName=XInput}" Content="X" Padding="0,0,0,3"/>
+                  <TextBox x:Name="XInput" Style="{StaticResource WorkspaceInput}" AutomationProperties.Name="X in millimeters"/>
+                </StackPanel>
+                <StackPanel x:Name="YField" Margin="5,0,0,6">
+                  <Label Target="{Binding ElementName=YInput}" Content="Y" Padding="0,0,0,3"/>
+                  <TextBox x:Name="YInput" Style="{StaticResource WorkspaceInput}" AutomationProperties.Name="Y in millimeters"/>
+                </StackPanel>
+                <StackPanel Margin="0,0,5,6">
+                  <Label Target="{Binding ElementName=WidthInput}" Content="Width" Padding="0,0,0,3"/>
+                  <TextBox x:Name="WidthInput" Style="{StaticResource WorkspaceInput}" AutomationProperties.Name="Width in millimeters"/>
+                </StackPanel>
+                <StackPanel Margin="5,0,0,6">
+                  <Label Target="{Binding ElementName=HeightInput}" Content="Height" Padding="0,0,0,3"/>
+                  <TextBox x:Name="HeightInput" Style="{StaticResource WorkspaceInput}" AutomationProperties.Name="Height in millimeters"/>
+                </StackPanel>
+              </UniformGrid>
+              <WrapPanel Margin="0,3,0,0">
+                <Button x:Name="ApplyButton" Click="ApplyGeometryClicked" Content="Apply" Margin="0,0,5,5"/>
+                <Button x:Name="FitButton" Click="FitClicked" Content="Fit page to content" Margin="0,0,5,5"/>
+                <Button x:Name="PresetButton" Click="PresetClicked" Content="Journal width…" Margin="0,0,5,5"/>
+                <Button x:Name="DetailsButton" Click="DetailsClicked" Content="Edit…" Margin="0,0,5,5"/>
+                <Button x:Name="RemoveButton" Click="RemoveClicked" Content="Remove" Margin="0,0,5,5"/>
+              </WrapPanel>
+            </StackPanel>
+          </GroupBox>
+          <Border Height="1" Background="{StaticResource WorkspaceLine}" Margin="0,9"/>
+          <TextBlock x:Name="InspectorActionsTitle" Text="PROJECT STYLE" Style="{StaticResource SectionTitle}" Margin="0,1,0,7"/>
+          <WrapPanel>
+            <Button x:Name="InspectorFirst" Click="InspectorActionClicked" Margin="0,0,5,5"/>
+            <Button x:Name="InspectorSecond" Click="InspectorActionClicked" Margin="0,0,5,5"/>
+          </WrapPanel>
+        </StackPanel>
+      </ScrollViewer>
     </Grid>
   </DockPanel>
 </Window>

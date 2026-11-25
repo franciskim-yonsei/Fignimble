@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <PackageReference Include="AvalonEdit" Version="6.3.0.90" />
     <None Update="Terminal/**/*" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../engine/fignimble/**/*.py" Link="engine/fignimble/%(RecursiveDir)%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
     <None Include="../../engine/requirements.txt" Link="engine/requirements.txt" CopyToPublishDirectory="PreserveNewest" />

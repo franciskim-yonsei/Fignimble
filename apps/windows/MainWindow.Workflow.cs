@@ -278,7 +278,7 @@ public partial class MainWindow
         if (messages.Count > 0)
         {
             Warnings.ItemsSource = messages;
-            Checks.IsExpanded = true;
+            ShowDrawer(PreflightTab);
         }
         Status.Text = $"Exported {exported} of {figures.Length} figures to {folder}." +
             (messages.Count > 0 ? " See Preflight for batch details." : "");

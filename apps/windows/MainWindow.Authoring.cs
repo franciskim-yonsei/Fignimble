@@ -104,6 +104,7 @@ public partial class MainWindow
         bool panel = selected is not null && FigureCanvas.Resizable(selected);
         Geometry.Header = page ? "Page geometry (mm)" : panel ? "Layer geometry (mm)" : count == 1 ? "Layer" : $"{count} selected layers";
         XField.Visibility = YField.Visibility = panel ? Visibility.Visible : Visibility.Collapsed;
+        GeometryInputs.Visibility = ApplyButton.Visibility = page || panel ? Visibility.Visible : Visibility.Collapsed;
         XInput.IsEnabled = YInput.IsEnabled = panel;
         WidthInput.IsEnabled = ApplyButton.IsEnabled = page || panel;
         HeightInput.IsEnabled = page || panel && selected?.Kind != "qr";
@@ -119,6 +120,7 @@ public partial class MainWindow
         YInput.Text = panel ? FormatMm(selected!.Box![1]) : "";
         WidthInput.Text = FormatMm(panel ? selected!.Box![2] : page ? currentRender?.Size?[0] : null);
         HeightInput.Text = FormatMm(panel ? selected!.Box![3] : page ? currentRender?.Size?[1] : null);
+        UpdateInspector();
     }
 
     private async void ApplyGeometryClicked(object sender, RoutedEventArgs e) => await ApplyGeometry();
@@ -174,7 +176,7 @@ public partial class MainWindow
     private void ShowWarnings(FigureWarning[]? warnings)
     {
         var messages = (warnings ?? []).Select(w => $"{w.Level}: {w.Message}").ToArray();
-        Checks.Header = messages.Length > 0 ? $"Preflight ({messages.Length})" : "Preflight";
+        PreflightTab.Header = messages.Length > 0 ? $"Preflight ({messages.Length})" : "Preflight";
         Warnings.ItemsSource = messages.Length > 0 ? messages : ["No preflight messages."];
     }
 

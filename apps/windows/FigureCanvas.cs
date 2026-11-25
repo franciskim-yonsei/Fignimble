@@ -23,7 +23,7 @@ public sealed class FigureCanvas : FrameworkElement
     internal void PreviewGuide(FigureGuide? guide) { previewGuide = guide; InvalidateVisual(); }
     internal bool SnapEnabled { get; set; } = true;
     private const double HandleSize = 2.2;
-    private static readonly Brush Accent = Brushes.DodgerBlue;
+    private static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(36, 107, 107));
     private static readonly Pen SelectionPen = new(Accent, 0.45);
 
     internal event Action<CanvasEdit>? EditCompleted;

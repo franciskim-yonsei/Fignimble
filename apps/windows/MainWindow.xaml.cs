@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     public MainWindow(string? initialPath)
     {
         InitializeComponent();
+        SetupWorkspace();
         reloadTimer.Tick += async (_, _) =>
         {
             if (busy || editingSource || Page.IsDragging) return;
@@ -41,6 +42,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         reloadTimer.Stop();
+        thumbnailTimer.Stop();
         terminal?.Dispose();
         engine?.Dispose();
         base.OnClosed(e);
@@ -60,10 +62,11 @@ public partial class MainWindow : Window
         var client = new EngineClient(python, remote);
         client.Notification += kind =>
         {
-            if (kind != "changed") return;
+            if (kind is not ("changed" or "rendered")) return;
             Dispatcher.BeginInvoke(() =>
             {
                 if (engine != client) return;
+                if (kind == "rendered") { thumbnailTimer.Start(); return; }
                 reloadTimer.Stop();
                 reloadTimer.Start();
             });
@@ -101,7 +104,8 @@ public partial class MainWindow : Window
         ExportButton.IsEnabled = !busy && validFigure;
         Page.IsEnabled = !busy && validFigure;
         MoreButton.IsEnabled = !busy && project is not null;
-        TerminalButton.IsEnabled = !busy && project is not null;
+        TerminalButton.IsEnabled = TerminalTab.IsEnabled = !busy && project is not null;
+        InspectorFirst.IsEnabled = InspectorSecond.IsEnabled = !busy && validFigure;
         EditSourceButton.IsEnabled = !busy && currentRender is not null;
     }
 
@@ -126,7 +130,7 @@ public partial class MainWindow : Window
         ResetProject();
         await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
         project = folder;
-        if (TerminalDrawer.Visibility == Visibility.Visible) StartShell();
+        if (TerminalRequested) StartShell();
         Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
         await RefreshProject(first);
     }
@@ -138,20 +142,24 @@ public partial class MainWindow : Window
         terminalFolder = null;
         state = null;
         project = null;
+        zoom = 1;
+        Viewport.ScrollToHome();
         Figures.ItemsSource = null;
+        figureCards.Clear();
+        RefreshFigureEmpty();
         ClearFigure();
         Title = "Fignimble for Windows";
     }
 
     private Task Reload() => project is null ? Task.CompletedTask :
-        During("Refreshing…", () => RefreshProject(Figures.SelectedItem as string, external: true));
+        During("Refreshing…", () => RefreshProject((Figures.SelectedItem as FigureCard)?.Name, external: true));
 
     private async void ReloadClicked(object sender, RoutedEventArgs e) => await Reload();
 
     private async Task RefreshProject(string? preferred, bool external = false)
     {
         await ReadState(preferred);
-        if (Figures.SelectedItem is string name) await RenderFigure(name, external);
+        if (Figures.SelectedItem is FigureCard card) await RenderFigure(card.Name, external);
         else
         {
             ClearFigure();
@@ -162,15 +170,13 @@ public partial class MainWindow : Window
     private async Task ReadState(string? preferred)
     {
         state = await engine!.CallAsync<ProjectState>("state");
-        string[] names = state.Figures.Select(f => f.Name).ToArray();
-        if (!names.SequenceEqual(Figures.Items.Cast<string>())) Figures.ItemsSource = names;
-        Figures.SelectedItem = names.Contains(preferred) ? preferred : names.FirstOrDefault();
+        SetFigureCards(state.Figures, preferred);
     }
 
     private async void FigureChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!busy && Figures.SelectedItem is string name)
-            await During($"Rendering {name}…", () => RenderFigure(name));
+        if (!busy && Figures.SelectedItem is FigureCard card && card.Name != shownFigure)
+            await During($"Rendering {card.Name}…", () => RenderFigure(card.Name));
     }
 
     private async Task RenderFigure(string name, bool external = false)
@@ -188,8 +194,9 @@ public partial class MainWindow : Window
         RefreshLayers();
         PageView.Visibility = Visibility.Collapsed;
         ScheduleRulers();
-        EmptyCanvas.Visibility = Visibility.Visible;
-        EmptyCanvas.Text = project is null ? "Open a folder containing a Fignimble figure (.py)." : "No figure selected.";
+        EmptyCanvasCard.Visibility = Visibility.Visible;
+        EmptyCanvas.Text = project is null ? "Open a local or SSH project, or start a new one." : "Create or select a figure to get started.";
+        CanvasSize.Text = "";
         SourceTitle.Text = "Figure source";
         SourceText.Clear();
         SyncGeometry();
@@ -209,12 +216,13 @@ public partial class MainWindow : Window
         UpdateZoom();
         PageView.Visibility = validFigure ? Visibility.Visible : Visibility.Collapsed;
         ScheduleRulers();
-        EmptyCanvas.Visibility = validFigure ? Visibility.Collapsed : Visibility.Visible;
+        EmptyCanvasCard.Visibility = validFigure ? Visibility.Collapsed : Visibility.Visible;
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
+        CanvasSize.Text = validFigure ? $"{render.Size![0]:g} × {render.Size[1]:g} mm" : "";
+        UpdateFigureCard(render.Figure, render.Thumb, render.Error, render.Warnings?.Count(w => w.Level != "info") ?? 0);
         double scroll = preserve ? SourceText.VerticalOffset : 0;
         SourceTitle.Text = Path.GetFileName(render.File) ?? "Figure source";
-        SourceText.Text = source;
-        SourceText.ScrollToVerticalOffset(scroll);
+        if (SourceText.Text != source) { SourceText.Text = source; SourceText.ScrollToVerticalOffset(scroll); }
         SyncGeometry();
         ShowWarnings(render.Warnings);
         bool empty = render.Elements is not { Length: > 0 };
@@ -275,7 +283,7 @@ public partial class MainWindow : Window
         if (result.Warnings is { Length: > 0 } warnings)
         {
             Warnings.ItemsSource = warnings.Select(w => "Export: " + w).Concat(Warnings.Items.Cast<string>()).Distinct().ToArray();
-            Checks.IsExpanded = true;
+            ShowDrawer(PreflightTab);
             Status.Text = $"Exported {path} · {warnings.Length} warning(s); see Preflight.";
         }
         else Status.Text = $"Exported {path}";

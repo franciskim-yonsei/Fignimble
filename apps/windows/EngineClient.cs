@@ -13,6 +13,7 @@ internal sealed class EngineClient : IDisposable
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> requests = new();
     private readonly Queue<string> errors = new();
     private readonly Task reader;
+    private readonly SemaphoreSlim sendGate = new(1, 1);
     private int nextId;
 
     public event Action<string>? Notification;
@@ -127,7 +128,7 @@ internal sealed class EngineClient : IDisposable
         }
     }
 
-    // The window serializes requests, including refreshes triggered by file changes.
+    // Serialize the outgoing lines; a background thumbnail refresh may overlap a foreground command.
     public async Task<T> CallAsync<T>(string command, object? arguments = null)
     {
         int id = Interlocked.Increment(ref nextId);
@@ -140,8 +141,13 @@ internal sealed class EngineClient : IDisposable
             if (arguments is not null)
                 foreach (var field in JsonSerializer.SerializeToElement(arguments, Json).EnumerateObject())
                     message.Add(field.Name, field.Value);
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message, Json));
-            await process.StandardInput.FlushAsync();
+            await sendGate.WaitAsync();
+            try
+            {
+                await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message, Json));
+                await process.StandardInput.FlushAsync();
+            }
+            finally { sendGate.Release(); }
             int timeout = Remote is not null || command is "export" or "export_table" ? 620 : 200;
             JsonElement result = await request.Task.WaitAsync(TimeSpan.FromSeconds(timeout));
             if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("ok", out var ok) &&
@@ -170,10 +176,10 @@ internal sealed class EngineClient : IDisposable
 internal sealed record RemoteProject(string Host, string Path, string Python, string Mirror);
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo, string[]? History, string[]? Future,
     string[]? Panels);
-internal sealed record FigureEntry(string Name);
+internal sealed record FigureEntry(string Name, string? Thumb, string? Error, int Warnings);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
     FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal,
-    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle, RenderPoster? Poster);
+    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle, RenderPoster? Poster, string? Thumb);
 internal sealed record RenderPoster(string Key, bool Landscape, double? Margin);
 internal sealed record FigureStyle(Dictionary<string, JsonElement> Props);
 internal sealed record FigureGuide(double? X, double? Y);
