@@ -37,6 +37,13 @@ internal sealed class FormDialog : Window
         return box;
     }
 
+    public CheckBox Check(string label, bool value = false)
+    {
+        var box = new CheckBox { Content = label, IsChecked = value, Margin = new Thickness(0, 2, 0, 8) };
+        fields.Children.Add(box);
+        return box;
+    }
+
     public void Note(string text) => fields.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 0, 0, 8) });
 

@@ -48,4 +48,16 @@ Start-Process .\apps\windows\bin\Debug\net10.0-windows\Fignimble.exe -ArgumentLi
 
 `FIGNIMBLE_PYTHON` overrides discovery. Otherwise a project's `.venv` or `venv` takes precedence over the source-tree or installed Python environment. Install the engine dependencies into that environment before opening the project. `FIGNIMBLE_ENGINE` can point to a different `engine` directory.
 
-This covers the high-value local workflow, not macOS parity. Clipboard formats depend on the receiving application; layout controls do not replace programmatic layouts. SSH projects and CMYK/EPS controls are not included. Terminal host code and xterm assets are adapted from Manimble `b88741a`; see the repository BSD license and `Terminal/LICENSE-xterm.txt`.
+## Posters, previews, and press export
+
+- **More → New poster from template** creates a poster with editable title, sections, and QR code. Use **Poster page settings** for orientation and safe margin, and **Place another figure** to include a live reference to another figure in the same project. Changing the page orientation does not reflow its contents automatically.
+- **More** includes the figure’s dark version, a separate color-vision preview, and the BioCartoon search/preview/import browser. Check the icon’s license and preserve its credited attribution. The browser does not submit artwork to the shared catalog.
+- **Export** includes JPEG and EPS as well as CMYK, outlined text, PDF bleed, and crop marks where supported. EPS and CMYK/outlined PDF require [Ghostscript](https://ghostscript.com/releases/gsdnld.html) on the rendering machine. Install it in the usual Windows location, add `gswin64c.exe` to `PATH`, or set `FIGNIMBLE_GHOSTSCRIPT` to its full path. Check your print shop’s requirements, especially color profiles.
+
+## SSH projects (key/agent authentication)
+
+Use **SSH → Test login in an SSH console** to check the host and verify its key. The background project connection needs a key or SSH agent usable without prompts. It respects the native Windows OpenSSH configuration; use an SSH alias for custom ports or jump hosts. **SSH → Open remote project** takes the host, project directory, and the Python on the Linux server (which must already have matplotlib, PyMuPDF, and Pillow). On connection, Fignimble installs its own engine files under the remote user’s cache, mirrors editable files under `%LOCALAPPDATA%\Fignimble\remote`, and renders on Linux. The app’s built-in terminal runs locally in the mirror. The same SSH menu imports existing remote panel scripts and refreshes their source; their data dependencies are not copied. Back up the remote project before using this experimental workflow.
+
+Windows does not reuse password/OTP sessions from the login console for background commands. Remote names must be Windows-compatible and not collide when case is ignored. The protocol was tested with a simulated server, not a live Linux host.
+
+This is not full macOS parity: clipboard formats depend on the receiving application, and visual layouts do not replace programmatic layouts. Terminal host code and xterm assets are adapted from Manimble `b88741a`; see the repository BSD license and `Terminal/LICENSE-xterm.txt`.

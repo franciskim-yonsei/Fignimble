@@ -73,7 +73,7 @@ public sealed class FigureCanvas : FrameworkElement
     internal static bool Unlocked(FigureElement e) => e.Props is not { Locked: true } and not { Hidden: true };
     internal static bool Movable(FigureElement e) => TopLevel(e) && Unlocked(e) && HasBox(e) &&
         e.Kind is "panel" or "image" or "inset" or "text" or "line" or "bracket" or "rect" or "ellipse" or "figure" or "table" or "layout" or "qr" or "path" or "legend";
-    internal static bool Resizable(FigureElement e) => Movable(e) && e.Kind is "panel" or "image" or "layout" or "inset";
+    internal static bool Resizable(FigureElement e) => Movable(e) && e.Kind is "panel" or "image" or "layout" or "inset" or "rect" or "ellipse" or "figure" or "qr";
     private static bool CanHit(FigureElement e) => TopLevel(e) && e.Props is not { Hidden: true } && HasBox(e);
     internal static bool HasBox(FigureElement e) => e.Box is { Length: 4 } b && b[2] >= 0 && b[3] >= 0;
     internal static Rect Box(FigureElement e) => new(e.Box![0], e.Box[1], e.Box[2], e.Box[3]);

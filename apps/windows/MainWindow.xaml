@@ -9,6 +9,7 @@
       <ToolBar Band="0" BandIndex="0">
         <Button x:Name="NewProjectButton" Click="NewProjectClicked" Padding="8,4">_New project…</Button>
         <Button x:Name="OpenButton" Click="OpenClicked" Padding="8,4">_Open project…</Button>
+        <Button x:Name="RemoteButton" Click="RemoteClicked" Padding="8,4">SSH…</Button>
         <Separator />
         <Label Target="{Binding ElementName=Figures}" Content="_Figure:" />
         <ComboBox x:Name="Figures" Width="130" SelectionChanged="FigureChanged" AutomationProperties.Name="Figure" />

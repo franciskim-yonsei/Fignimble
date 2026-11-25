@@ -11,12 +11,13 @@ public partial class MainWindow
     private JournalChoice[]? journals;
     private static readonly JournalChoice GeneralJournal = new("", "General (no journal preset)");
     private static readonly JournalChoice FigureJournal = new("", "Use figure’s journal / default");
-    private static readonly string[] AnnotationKinds = ["Text", "Arrow", "Significance bracket"];
+    private static readonly string[] AnnotationKinds = ["Text", "Arrow", "Significance bracket", "Line", "Rectangle", "Ellipse", "QR code"];
 
     private async Task<JournalChoice[]> Journals()
     {
         if (journals is not null) return journals;
-        var entries = await GetEngine().CallAsync<Dictionary<string, JournalPreset>>("journals");
+        var client = engine is { Running: true } active ? active : GetEngine();
+        var entries = await client.CallAsync<Dictionary<string, JournalPreset>>("journals");
         return journals = entries.Select(p => new JournalChoice(p.Key, p.Value.Name, p.Value.Widths)).OrderBy(j => j.Name).ToArray();
     }
 
@@ -25,23 +26,25 @@ public partial class MainWindow
         if (currentRender?.Size is not [var width, var height] || shownFigure is not { } figure) return;
         var dialog = new FormDialog(this, "Add annotation");
         var kind = dialog.Choice("Type", AnnotationKinds, AnnotationKinds[0]);
-        var text = dialog.Text("Text or significance label (not used for arrows)", "");
+        var text = dialog.Text("Text, significance label, or QR content (as applicable)", "", multiline: true);
         var x = dialog.Text("X (mm)", FormatMm(Math.Min(10, width / 4)));
         var y = dialog.Text("Y (mm)", FormatMm(Math.Min(10, height / 4)));
         double px = 0, py = 0;
         if (!dialog.Confirm("Add", () =>
             !TryMm(x.Text, false, out px) || !TryMm(y.Text, false, out py) || px < 0 || py < 0 || px >= width || py >= height
-                ? "Enter a position inside the page." : null)) return;
+                ? "Enter a position inside the page." : kind.SelectedIndex == 6 && string.IsNullOrWhiteSpace(text.Text) ? "Enter QR content." : null)) return;
         await InsertAnnotation(figure, kind.SelectedIndex, text.Text.Trim(), px, py, Math.Min(20, (width - px) * 0.8));
     }
 
     private Task InsertAnnotation(string figure, int type, string text, double x, double y, double span)
     {
-        string kind = type switch { 1 => "arrow", 2 => "bracket", _ => "text" };
+        string kind = type switch { 1 => "arrow", 2 => "bracket", 3 => "line", 4 => "rect", 5 => "ellipse", 6 => "qr", _ => "text" };
         object props = type switch
         {
-            1 => new { x1 = x, y1 = y, x2 = Math.Round(x + span, 2), y2 = y },
+            1 or 3 => new { x1 = x, y1 = y, x2 = Math.Round(x + span, 2), y2 = y },
             2 => new { x1 = x, x2 = Math.Round(x + span, 2), y, text = text.Length == 0 ? "*" : text },
+            4 or 5 => new { x, y, w = span, h = span / 2 },
+            6 => new { x, y, w = span, data = text },
             _ => new { x, y, text = text.Length == 0 ? "Text" : text }
         };
         return EditFigure(figure, new { figure, op = "insert", kind, props }, "Adding annotation…");
@@ -65,7 +68,7 @@ public partial class MainWindow
             if (dialog.Confirm("Apply", () => choice.SelectedIndex == 1 && string.IsNullOrWhiteSpace(text.Text) ? "Enter a custom label." : null))
                 await SetDetails(figure, layer.Oid, new() { ["label"] = choice.SelectedIndex switch { 1 => text.Text.Trim(), 2 => null, _ => "auto" } });
         }
-        else if (layer.Kind is "text" or "bracket" or "line")
+        else if (layer.Kind is "text" or "bracket" or "line" or "qr")
         {
             var dialog = new FormDialog(this, $"Edit {layer.Method ?? layer.Kind}");
             var inputs = new Dictionary<string, (TextBox Box, double Initial)>();
@@ -73,7 +76,14 @@ public partial class MainWindow
             {
                 if (value is { } n) inputs[key] = (dialog.Text(name, FormatMm(n)), n);
             }
-            TextBox? text = layer.Kind is "text" or "bracket" ? dialog.Text("Text", layer.Props?.Text ?? "", layer.Kind == "text") : null;
+            string initialText = (layer.Kind == "qr" ? layer.Props?.DataText : layer.Props?.Text) ?? "";
+            TextBox? text = layer.Kind is "text" or "bracket" or "qr" ? dialog.Text(layer.Kind == "qr" ? "Contents" : "Text", initialText, layer.Kind == "text") : null;
+            if (layer.Kind == "text")
+            {
+                Number("size", "Type size (pt)", layer.Props?.Size);
+                Number("width", "Text box width (mm)", layer.Props?.Width);
+                Number("height", "Text box height (mm)", layer.Props?.Height);
+            }
             Number("x1", "Start X (mm)", layer.Props?.X1);
             Number("y1", "Start Y (mm)", layer.Props?.Y1);
             Number("x2", "End X (mm)", layer.Props?.X2);
@@ -82,10 +92,10 @@ public partial class MainWindow
             if (dialog.Confirm("Apply", () =>
             {
                 props.Clear();
-                if (text is not null && text.Text != (layer.Props?.Text ?? "")) props["text"] = text.Text;
+                if (text is not null && text.Text != initialText) props[layer.Kind == "qr" ? "data" : "text"] = text.Text.Replace("\r\n", "\n");
                 foreach (var (key, (box, initial)) in inputs)
                 {
-                    if (!TryMm(box.Text, false, out double number)) return "Coordinates must be numbers in millimeters.";
+                    if (!TryMm(box.Text, key is "size" or "width" or "height", out double number)) return "Enter valid coordinates or positive dimensions.";
                     if (box.Text != FormatMm(initial) && Math.Abs(number - initial) > 0.00001) props[key] = number;
                 }
                 return null;
@@ -123,13 +133,34 @@ public partial class MainWindow
         await During("Loading export options…", async () => { choices = await Journals(); Status.Text = "Choose export options."; });
         if (choices.Length == 0) return;
         var dialog = new FormDialog(this, "Export figure");
-        var formats = new[] { "PDF", "SVG", "PNG", "TIFF", "PPTX" };
+        var formats = new[] { "PDF", "SVG", "PNG", "TIFF", "JPEG", "EPS", "PPTX" };
         var format = dialog.Choice("Format", formats, formats[0]);
         var journal = dialog.Choice("Journal resolution rules", choices.Prepend(FigureJournal), FigureJournal);
         var resolution = dialog.Text("Resolution (dpi; raster content only)", "600");
+        var useDark = dialog.Check("Export the figure’s dark version", darkPreview);
+        var cmyk = dialog.Check("CMYK");
+        var outline = dialog.Check("Convert text to outlines");
+        var marks = dialog.Check("Crop marks (PDF)");
+        var bleed = dialog.Text("Bleed (mm, PDF)", "0");
+        dialog.Note("EPS and CMYK or outlined PDF require Ghostscript on the rendering machine. Confirm the print shop’s preferred color profile separately.");
+        void Options()
+        {
+            string? kind = format.SelectedItem as string;
+            cmyk.IsEnabled = kind is "PDF" or "EPS" or "TIFF" or "JPEG";
+            outline.IsEnabled = kind is "PDF" or "EPS" or "SVG";
+            marks.IsEnabled = bleed.IsEnabled = kind == "PDF";
+        }
+        format.SelectionChanged += (_, _) => Options();
+        Options();
         int dpi = 600;
-        if (!dialog.Confirm("Continue", () => int.TryParse(resolution.Text, NumberStyles.None, CultureInfo.InvariantCulture, out dpi) &&
-            dpi is >= 72 and <= 2400 ? null : "Enter a whole-number resolution between 72 and 2400 dpi.")) return;
+        double edge = 0;
+        if (!dialog.Confirm("Continue", () =>
+        {
+            if (!int.TryParse(resolution.Text, NumberStyles.None, CultureInfo.InvariantCulture, out dpi) || dpi is < 72 or > 2400)
+                return "Enter a whole-number resolution between 72 and 2400 dpi.";
+            if (bleed.IsEnabled && (!TryMm(bleed.Text, false, out edge) || edge < 0 || edge > 100)) return "Enter bleed between 0 and 100 mm.";
+            return null;
+        })) return;
         string ext = ((string)format.SelectedItem).ToLowerInvariant();
         var save = new SaveFileDialog { Title = "Export figure", Filter = $"{format.SelectedItem} (*.{ext})|*.{ext}",
             DefaultExt = "." + ext, FileName = figure, InitialDirectory = project };
@@ -137,7 +168,9 @@ public partial class MainWindow
         {
             if (!Path.GetExtension(save.FileName).Equals("." + ext, StringComparison.OrdinalIgnoreCase))
             { Status.Text = $"Use the .{ext} filename extension for this format."; return; }
-            await ExportFigure(figure, save.FileName, dpi, ((JournalChoice)journal.SelectedItem).Key);
+            await ExportWithOptions(figure, save.FileName, dpi, ((JournalChoice)journal.SelectedItem).Key,
+                useDark.IsChecked == true, cmyk.IsEnabled && cmyk.IsChecked == true, outline.IsEnabled && outline.IsChecked == true,
+                bleed.IsEnabled ? edge : 0, marks.IsEnabled && marks.IsChecked == true);
         }
     }
 }

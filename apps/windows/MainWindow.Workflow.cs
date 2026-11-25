@@ -34,6 +34,14 @@ public partial class MainWindow
             item.Click += async (_, _) => await run();
             menu.Items.Add(item);
         }
+        Add("New poster from template…", ChoosePoster, project is not null);
+        Add("Poster page settings…", PosterSettings, validFigure && currentRender?.Poster is not null);
+        Add("Place another figure…", ChoosePlacedFigure, validFigure && state?.Figures is { Length: > 1 });
+        Add("Search BioCartoon icons…", BrowseIcons, validFigure);
+        var dark = new MenuItem { Header = "Dark figure preview", IsCheckable = true, IsChecked = darkPreview, IsEnabled = validFigure };
+        dark.Click += async (_, _) => await SetDarkPreview(dark.IsChecked);
+        menu.Items.Add(dark);
+        Add("Color-vision preview…", ChooseVision, validFigure);
         Add("Edit caption…", EditCaption, validFigure);
         Add("Plot style…", () => EditStyle(false), validFigure);
         Add("Panel lettering style…", () => EditStyle(true), validFigure);

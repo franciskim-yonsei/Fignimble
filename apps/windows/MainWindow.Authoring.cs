@@ -105,12 +105,13 @@ public partial class MainWindow
         Geometry.Header = page ? "Page geometry (mm)" : panel ? "Layer geometry (mm)" : count == 1 ? "Layer" : $"{count} selected layers";
         XField.Visibility = YField.Visibility = panel ? Visibility.Visible : Visibility.Collapsed;
         XInput.IsEnabled = YInput.IsEnabled = panel;
-        WidthInput.IsEnabled = HeightInput.IsEnabled = ApplyButton.IsEnabled = page || panel;
+        WidthInput.IsEnabled = ApplyButton.IsEnabled = page || panel;
+        HeightInput.IsEnabled = page || panel && selected?.Kind != "qr";
         FitButton.Visibility = PresetButton.Visibility = page ? Visibility.Visible : Visibility.Collapsed;
         FitButton.IsEnabled = currentRender?.Elements?.Any(FigureCanvas.HasBox) == true;
         RemoveButton.Visibility = count == 1 ? Visibility.Visible : Visibility.Collapsed;
         RemoveButton.IsEnabled = selected is not null && FigureCanvas.Unlocked(selected);
-        bool details = selected?.Kind is "panel" or "image" or "text" or "line" or "bracket";
+        bool details = selected?.Kind is "panel" or "image" or "text" or "line" or "bracket" or "qr";
         DetailsButton.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
         DetailsButton.IsEnabled = details && FigureCanvas.Unlocked(selected!);
         DetailsButton.Content = selected?.Kind is "panel" or "image" ? "Label…" : "Edit…";
@@ -148,7 +149,9 @@ public partial class MainWindow
         object args = panel switch
         {
             null => new { figure, op = "figure", props },
-            { Kind: "inset" } => new { figure, op = "resize", oid = panel.Oid, box = new[]
+            { Kind: "qr" } => new { figure, op = "set", oid = panel.Oid,
+                props = props.Where(p => p.Key != "h").ToDictionary() },
+            { Kind: "inset" or "figure" } => new { figure, op = "resize", oid = panel.Oid, box = new[]
                 { props.GetValueOrDefault("x", current[0]), props.GetValueOrDefault("y", current[1]),
                     props.GetValueOrDefault("w", current[2]), props.GetValueOrDefault("h", current[3]) } },
             _ => new { figure, op = "set", oid = panel.Oid, props }

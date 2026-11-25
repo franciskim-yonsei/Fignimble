@@ -19,11 +19,13 @@ internal sealed class EngineClient : IDisposable
     public bool Running => !process.HasExited;
     public string Python { get; }
     public string EngineRoot { get; }
+    public RemoteProject? Remote { get; }
 
-    public EngineClient(string python)
+    public EngineClient(string python, RemoteProject? remote = null)
     {
         string root = EngineRoot = FindEngine();
         Python = python;
+        Remote = remote;
         var utf8 = new UTF8Encoding(false);
         var start = new ProcessStartInfo(python)
         {
@@ -31,7 +33,10 @@ internal sealed class EngineClient : IDisposable
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             StandardInputEncoding = utf8, StandardOutputEncoding = utf8, StandardErrorEncoding = utf8,
         };
-        foreach (string arg in new[] { "-u", "-m", "fignimble.rpc" }) start.ArgumentList.Add(arg);
+        string[] args = remote is null ? ["-u", "-m", "fignimble.rpc"] :
+            ["-u", "-m", "fignimble.tunnel", "--host=" + remote.Host, "--path=" + remote.Path,
+             "--mirror=" + remote.Mirror, "--python=" + remote.Python];
+        foreach (string arg in args) start.ArgumentList.Add(arg);
         start.Environment.TryGetValue("PYTHONPATH", out string? pythonPath);
         start.Environment["PYTHONPATH"] = string.IsNullOrEmpty(pythonPath) ? root : root + Path.PathSeparator + pythonPath;
         // The worker should use the same interpreter that was actually launched (sys.executable).
@@ -137,7 +142,8 @@ internal sealed class EngineClient : IDisposable
                     message.Add(field.Name, field.Value);
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(message, Json));
             await process.StandardInput.FlushAsync();
-            JsonElement result = await request.Task.WaitAsync(TimeSpan.FromSeconds(200));
+            int timeout = Remote is not null || command is "export" or "export_table" ? 620 : 200;
+            JsonElement result = await request.Task.WaitAsync(TimeSpan.FromSeconds(timeout));
             if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("ok", out var ok) &&
                 ok.ValueKind == JsonValueKind.False)
                 throw new InvalidOperationException(result.TryGetProperty("error", out var error)
@@ -152,7 +158,7 @@ internal sealed class EngineClient : IDisposable
         try
         {
             process.StandardInput.Close();
-            if (!process.WaitForExit(1000)) process.Kill(entireProcessTree: true);
+            if (!process.WaitForExit(Remote is null ? 1000 : 5000)) process.Kill(entireProcessTree: true);
         }
         catch (InvalidOperationException) { }
         catch (System.ComponentModel.Win32Exception) { }
@@ -161,12 +167,14 @@ internal sealed class EngineClient : IDisposable
     }
 }
 
+internal sealed record RemoteProject(string Host, string Path, string Python, string Mirror);
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo, string[]? History, string[]? Future,
     string[]? Panels);
 internal sealed record FigureEntry(string Name);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
     FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal,
-    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle);
+    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle, RenderPoster? Poster);
+internal sealed record RenderPoster(string Key, bool Landscape, double? Margin);
 internal sealed record FigureStyle(Dictionary<string, JsonElement> Props);
 internal sealed record FigureGuide(double? X, double? Y);
 internal sealed record FigureCaption(string? Text);
@@ -181,9 +189,11 @@ internal sealed record PanelText(string Key, string Text, double[]? Box)
     public override string ToString() => $"{Key}: {Text}";
 }
 internal sealed record ElementProperties(bool Locked, bool Hidden, string? Name, string? Source, string? Text,
-    JsonElement Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells)
+    JsonElement Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells,
+    JsonElement Data, double? Size, double? Width, double? Height)
 {
     public string? LabelText => Label.ValueKind == JsonValueKind.String ? Label.GetString() : null;
+    public string? DataText => Data.ValueKind == JsonValueKind.String ? Data.GetString() : null;
 }
 internal sealed record RenderJournal(string Key);
 internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths);

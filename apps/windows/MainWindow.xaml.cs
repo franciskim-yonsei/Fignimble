@@ -49,10 +49,15 @@ public partial class MainWindow : Window
     private EngineClient GetEngine(string? targetProject = null)
     {
         string python = EngineClient.ResolvePython(targetProject ?? project);
-        if (engine is { Running: true } && string.Equals(engine.Python, python, StringComparison.OrdinalIgnoreCase)) return engine;
+        if (engine is { Running: true, Remote: null } && string.Equals(engine.Python, python, StringComparison.OrdinalIgnoreCase)) return engine;
+        return SwitchEngine(python, null);
+    }
+
+    private EngineClient SwitchEngine(string python, RemoteProject? remote)
+    {
         engine?.Dispose();
         engine = null;
-        var client = new EngineClient(python);
+        var client = new EngineClient(python, remote);
         client.Notification += kind =>
         {
             if (kind != "changed") return;
@@ -84,7 +89,7 @@ public partial class MainWindow : Window
 
     private void UpdateControls()
     {
-        NewProjectButton.IsEnabled = OpenButton.IsEnabled = !busy;
+        NewProjectButton.IsEnabled = OpenButton.IsEnabled = RemoteButton.IsEnabled = !busy;
         Figures.IsEnabled = !busy && Figures.HasItems;
         NewFigureButton.IsEnabled = ReloadButton.IsEnabled = !busy && project is not null;
         ImportButton.IsEnabled = SampleButton.IsEnabled = !busy && validFigure;
@@ -118,6 +123,16 @@ public partial class MainWindow : Window
     private async Task OpenProjectCore(string folder, string? first)
     {
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException($"Project folder not found: {folder}");
+        ResetProject();
+        await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
+        project = folder;
+        if (TerminalDrawer.Visibility == Visibility.Visible) StartShell();
+        Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
+        await RefreshProject(first);
+    }
+
+    private void ResetProject()
+    {
         reloadTimer.Stop();
         terminal?.Stop();
         terminalFolder = null;
@@ -126,11 +141,6 @@ public partial class MainWindow : Window
         Figures.ItemsSource = null;
         ClearFigure();
         Title = "Fignimble for Windows";
-        await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
-        project = folder;
-        if (TerminalDrawer.Visibility == Visibility.Visible) StartShell();
-        Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
-        await RefreshProject(first);
     }
 
     private Task Reload() => project is null ? Task.CompletedTask :
@@ -166,7 +176,7 @@ public partial class MainWindow : Window
     private async Task RenderFigure(string name, bool external = false)
     {
         if (name != shownFigure) ClearFigure();
-        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name }), external);
+        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name, dark = darkPreview }), external);
     }
 
     private void ClearFigure()
@@ -251,13 +261,17 @@ public partial class MainWindow : Window
         await ChooseExport(figure);
     }
 
-    private Task ExportFigure(string figure, string path, int dpi, string journal) => During("Exporting figure…", async () =>
+    private Task ExportFigure(string figure, string path, int dpi, string journal) =>
+        ExportWithOptions(figure, path, dpi, journal, false, false, false, 0, false);
+
+    private Task ExportWithOptions(string figure, string path, int dpi, string journal, bool dark, bool cmyk,
+                                   bool outline, double bleed, bool marks) => During("Exporting figure…", async () =>
     {
         string format = Path.GetExtension(path).ToLowerInvariant();
-        if (format is not (".pdf" or ".svg" or ".png" or ".tiff" or ".pptx"))
-            throw new ArgumentException("Choose a .pdf, .svg, .png, .tiff, or .pptx filename.");
+        if (format is not (".pdf" or ".svg" or ".png" or ".tiff" or ".pptx" or ".eps" or ".jpg" or ".jpeg"))
+            throw new ArgumentException("Choose a supported figure extension.");
         var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..], dpi,
-            journal = string.IsNullOrEmpty(journal) ? null : journal });
+            dark, cmyk, outline, bleed, marks, journal = string.IsNullOrEmpty(journal) ? null : journal });
         if (result.Warnings is { Length: > 0 } warnings)
         {
             Warnings.ItemsSource = warnings.Select(w => "Export: " + w).Concat(Warnings.Items.Cast<string>()).Distinct().ToArray();
