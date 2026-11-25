@@ -20,8 +20,17 @@ public sealed class FigureCanvas : FrameworkElement
     private static readonly Pen SelectionPen = new(Accent, 0.45);
 
     internal event Action<CanvasEdit>? EditCompleted;
+    internal event Action? SelectionChanged;
     internal bool IsDragging => start.HasValue;
-    private FigureElement? Selection => figure?.Elements?.FirstOrDefault(e => e.Oid == selected);
+    internal FigureElement? Selection => figure?.Elements?.FirstOrDefault(e => e.Oid == selected);
+
+    internal void Select(string? oid)
+    {
+        selected = oid;
+        if (Selection is not { } element || !Editable(element)) selected = null;
+        InvalidateVisual();
+        SelectionChanged?.Invoke();
+    }
 
     internal void ShowFigure(FigureRender? render, bool keepSelection)
     {
@@ -35,8 +44,9 @@ public sealed class FigureCanvas : FrameworkElement
     }
 
     private static bool Editable(FigureElement e) => (e.Kind is "panel" or "image") && e.Parent is null && e.Host is null
-        && e.Box is { Length: 4 } && e.Box[2] > 0 && e.Box[3] > 0;
-    private static Rect Box(FigureElement e) => new(e.Box[0], e.Box[1], e.Box[2], e.Box[3]);
+        && e.Props is not { Locked: true } and not { Hidden: true } && HasBox(e);
+    internal static bool HasBox(FigureElement e) => e.Box is { Length: 4 } && e.Box[2] > 0 && e.Box[3] > 0;
+    internal static Rect Box(FigureElement e) => new(e.Box[0], e.Box[1], e.Box[2], e.Box[3]);
     private static Rect Handle(Rect r) => new(r.Right - HandleSize, r.Bottom - HandleSize, HandleSize, HandleSize);
 
     protected override void OnRender(DrawingContext dc)
@@ -91,7 +101,7 @@ public sealed class FigureCanvas : FrameworkElement
         Point p = e.GetPosition(this);
         resizing = Selection is { } current && Handle(Box(current)).Contains(p);
         if (!resizing)
-            selected = figure?.Elements?.LastOrDefault(el => Editable(el) && Box(el).Contains(p))?.Oid;
+            Select(figure?.Elements?.LastOrDefault(el => Editable(el) && Box(el).Contains(p))?.Oid);
         if (selected is not null && CaptureMouse()) { start = p; delta = default; }
         InvalidateVisual();
         e.Handled = true;

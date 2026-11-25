@@ -5,17 +5,25 @@
         Title="Fignimble for Windows" Width="1120" Height="760" MinWidth="680" MinHeight="450"
         PreviewKeyDown="HandleKey">
   <DockPanel>
-    <ToolBar DockPanel.Dock="Top">
-      <Button x:Name="OpenButton" Click="OpenClicked" Padding="8,4">_Open project…</Button>
-      <Separator />
-      <Label Target="{Binding ElementName=Figures}" Content="_Figure:" />
-      <ComboBox x:Name="Figures" Width="145" SelectionChanged="FigureChanged" AutomationProperties.Name="Figure" />
-      <Button x:Name="ReloadButton" Click="ReloadClicked" Padding="8,4">Reload</Button>
-      <Separator />
-      <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
-      <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
-      <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">Export _PDF…</Button>
-    </ToolBar>
+    <ToolBarTray DockPanel.Dock="Top" IsLocked="True">
+      <ToolBar Band="0" BandIndex="0">
+        <Button x:Name="NewProjectButton" Click="NewProjectClicked" Padding="8,4">_New project…</Button>
+        <Button x:Name="OpenButton" Click="OpenClicked" Padding="8,4">_Open project…</Button>
+        <Separator />
+        <Label Target="{Binding ElementName=Figures}" Content="_Figure:" />
+        <ComboBox x:Name="Figures" Width="130" SelectionChanged="FigureChanged" AutomationProperties.Name="Figure" />
+        <Button x:Name="NewFigureButton" Click="NewFigureClicked" Padding="8,4">New figure…</Button>
+        <Button x:Name="ReloadButton" Click="ReloadClicked" Padding="8,4">Reload</Button>
+      </ToolBar>
+      <ToolBar Band="1" BandIndex="0">
+        <Button x:Name="ImportButton" Click="ImportClicked" Padding="8,4" ToolTip="Add a Python panel, image, or table">_Import…</Button>
+        <Button x:Name="SampleButton" Click="SampleClicked" Padding="8,4" ToolTip="Insert a self-contained matplotlib example">Add _sample plot</Button>
+        <Separator />
+        <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
+        <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
+        <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">_Export…</Button>
+      </ToolBar>
+    </ToolBarTray>
     <Border DockPanel.Dock="Bottom" BorderBrush="#D0D0D0" BorderThickness="0,1,0,0" Padding="8,4">
       <TextBlock x:Name="Status" TextWrapping="Wrap" AutomationProperties.Name="Status" />
     </Border>
@@ -34,6 +42,40 @@
       </Grid>
       <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#D0D0D0" />
       <DockPanel Grid.Column="2">
+        <GroupBox x:Name="Geometry" DockPanel.Dock="Top" Header="Page geometry (mm)" Margin="8,6,8,4">
+          <StackPanel Margin="6">
+            <UniformGrid Columns="2">
+              <StackPanel x:Name="XField" Margin="3">
+                <Label Target="{Binding ElementName=XInput}" Content="X" Padding="0,0,0,3" />
+                <TextBox x:Name="XInput" AutomationProperties.Name="X in millimeters" />
+              </StackPanel>
+              <StackPanel x:Name="YField" Margin="3">
+                <Label Target="{Binding ElementName=YInput}" Content="Y" Padding="0,0,0,3" />
+                <TextBox x:Name="YInput" AutomationProperties.Name="Y in millimeters" />
+              </StackPanel>
+              <StackPanel Margin="3">
+                <Label Target="{Binding ElementName=WidthInput}" Content="Width" Padding="0,0,0,3" />
+                <TextBox x:Name="WidthInput" AutomationProperties.Name="Width in millimeters" />
+              </StackPanel>
+              <StackPanel Margin="3">
+                <Label Target="{Binding ElementName=HeightInput}" Content="Height" Padding="0,0,0,3" />
+                <TextBox x:Name="HeightInput" AutomationProperties.Name="Height in millimeters" />
+              </StackPanel>
+            </UniformGrid>
+            <WrapPanel Margin="3,6,3,2">
+              <Button x:Name="ApplyButton" Click="ApplyGeometryClicked" Content="Apply" Padding="8,3" />
+              <Button x:Name="FitButton" Click="FitClicked" Content="Fit page to content" Padding="8,3" Margin="6,0,0,0" />
+              <Button x:Name="RemoveButton" Click="RemoveClicked" Content="Remove panel" Padding="8,3" Margin="6,0,0,0" />
+            </WrapPanel>
+          </StackPanel>
+        </GroupBox>
+        <Expander x:Name="Checks" DockPanel.Dock="Top" Header="Preflight" Margin="8,3">
+          <ListBox x:Name="Warnings" MaxHeight="115" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Preflight messages">
+            <ListBox.ItemTemplate>
+              <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" /></DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Expander>
         <TextBlock x:Name="SourceTitle" DockPanel.Dock="Top" Padding="8" FontWeight="SemiBold" Text="Figure source" />
         <TextBox x:Name="SourceText" IsReadOnly="True" AcceptsReturn="True" FontFamily="Consolas" FontSize="13"
                  BorderThickness="0" Padding="8" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"

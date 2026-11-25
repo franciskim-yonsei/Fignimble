@@ -147,7 +147,13 @@ internal sealed class EngineClient : IDisposable
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo);
 internal sealed record FigureEntry(string Name);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
-    FigureElement[]? Elements, FigureElement[]? Labels, string? Error);
-internal sealed record FigureElement(string Oid, string? Kind, double[] Box, Sprite? Sprite, string? Parent, string? Host);
+    FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error);
+internal sealed record FigureWarning(string Level, string Message);
+internal sealed record FigureElement(string Oid, string? Kind, double[] Box, Sprite? Sprite, string? Parent,
+    string? Host, ElementProperties? Props);
+internal sealed record ElementProperties(bool Locked, bool Hidden);
 internal sealed record Sprite(string File, double X, double Y, double W, double H);
-internal sealed record EditResult(FigureRender Figure);
+internal sealed record EditResult(FigureRender Figure, string[]? Select);
+internal sealed record NewProjectResult(string Project, string Figure);
+internal sealed record NewFigureResult(string Name);
+internal sealed record ExportResult(string[]? Warnings);

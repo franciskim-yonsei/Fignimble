@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private ProjectState? state;
     private string? project;
     private string? shownFigure;
+    private FigureRender? currentRender;
     private bool validFigure;
     private bool busy;
 
@@ -28,8 +29,10 @@ public partial class MainWindow : Window
             await Reload();
         };
         Page.EditCompleted += async edit => await CanvasEdited(edit);
+        Page.SelectionChanged += SyncGeometry;
         UpdateControls();
-        Status.Text = "Open a local project. Drag a panel to move it, or drag its blue handle to resize it.";
+        SyncGeometry();
+        Status.Text = "Open a project, or create one and try Add sample plot.";
         if (initialPath is not null) Loaded += async (_, _) => await OpenProject(initialPath);
     }
 
@@ -67,9 +70,11 @@ public partial class MainWindow : Window
 
     private void UpdateControls()
     {
-        OpenButton.IsEnabled = !busy;
+        NewProjectButton.IsEnabled = OpenButton.IsEnabled = !busy;
         Figures.IsEnabled = !busy && Figures.HasItems;
-        ReloadButton.IsEnabled = !busy && project is not null;
+        NewFigureButton.IsEnabled = ReloadButton.IsEnabled = !busy && project is not null;
+        ImportButton.IsEnabled = SampleButton.IsEnabled = !busy && validFigure;
+        Geometry.IsEnabled = !busy && validFigure;
         UndoButton.IsEnabled = !busy && state?.CanUndo == true;
         RedoButton.IsEnabled = !busy && state?.CanRedo == true;
         ExportButton.IsEnabled = !busy && validFigure;
@@ -86,8 +91,13 @@ public partial class MainWindow : Window
     private Task OpenProject(string path) => During("Opening project…", async () =>
     {
         string fullPath = Path.GetFullPath(path);
-        string folder = File.Exists(fullPath) ? Path.GetDirectoryName(fullPath)! : fullPath;
-        string? first = File.Exists(fullPath) ? Path.GetFileNameWithoutExtension(fullPath) : null;
+        bool file = File.Exists(fullPath);
+        await OpenProjectCore(file ? Path.GetDirectoryName(fullPath)! : fullPath,
+            file ? Path.GetFileNameWithoutExtension(fullPath) : null);
+    });
+
+    private async Task OpenProjectCore(string folder, string? first)
+    {
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException($"Project folder not found: {folder}");
         reloadTimer.Stop();
         state = null;
@@ -99,17 +109,17 @@ public partial class MainWindow : Window
         project = folder;
         Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
         await RefreshProject(first);
-    });
+    }
 
     private Task Reload() => project is null ? Task.CompletedTask :
-        During("Refreshing…", () => RefreshProject(Figures.SelectedItem as string));
+        During("Refreshing…", () => RefreshProject(Figures.SelectedItem as string, external: true));
 
     private async void ReloadClicked(object sender, RoutedEventArgs e) => await Reload();
 
-    private async Task RefreshProject(string? preferred)
+    private async Task RefreshProject(string? preferred, bool external = false)
     {
         await ReadState(preferred);
-        if (Figures.SelectedItem is string name) await RenderFigure(name);
+        if (Figures.SelectedItem is string name) await RenderFigure(name, external);
         else
         {
             ClearFigure();
@@ -131,15 +141,16 @@ public partial class MainWindow : Window
             await During($"Rendering {name}…", () => RenderFigure(name));
     }
 
-    private async Task RenderFigure(string name)
+    private async Task RenderFigure(string name, bool external = false)
     {
         if (name != shownFigure) ClearFigure();
-        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name }));
+        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name }), external);
     }
 
     private void ClearFigure()
     {
         shownFigure = null;
+        currentRender = null;
         validFigure = false;
         Page.ShowFigure(null, false);
         PageView.Visibility = Visibility.Collapsed;
@@ -147,12 +158,17 @@ public partial class MainWindow : Window
         EmptyCanvas.Text = project is null ? "Open a folder containing a Fignimble figure (.py)." : "No figure selected.";
         SourceTitle.Text = "Figure source";
         SourceText.Clear();
+        SyncGeometry();
+        ShowWarnings(null);
     }
 
-    private void ShowRender(FigureRender render)
+    private void ShowRender(FigureRender render, bool external = false)
     {
-        bool preserve = shownFigure == render.Figure;
+        string source = File.Exists(render.File) ? File.ReadAllText(render.File) : "";
+        // A source change can reorder the OIDs. Asset-only changes and duplicate notifications can keep the selection.
+        bool preserve = shownFigure == render.Figure && (!external || source == SourceText.Text);
         shownFigure = render.Figure;
+        currentRender = render;
         validFigure = render.Error is null && render.Size is [> 0, > 0];
         Page.ShowFigure(validFigure ? render : null, preserve);
         PageView.Visibility = validFigure ? Visibility.Visible : Visibility.Collapsed;
@@ -160,9 +176,13 @@ public partial class MainWindow : Window
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
         double scroll = preserve ? SourceText.VerticalOffset : 0;
         SourceTitle.Text = Path.GetFileName(render.File) ?? "Figure source";
-        SourceText.Text = File.Exists(render.File) ? File.ReadAllText(render.File) : "";
+        SourceText.Text = source;
         SourceText.ScrollToVerticalOffset(scroll);
-        Status.Text = render.Error?.Split('\n', 2)[0] ?? $"{render.Figure} — {render.Size?[0]:g} × {render.Size?[1]:g} mm";
+        SyncGeometry();
+        ShowWarnings(render.Warnings);
+        bool empty = render.Elements is not { Length: > 0 };
+        Status.Text = render.Error?.Split('\n', 2)[0] ?? $"{render.Figure} — {render.Size?[0]:g} × {render.Size?[1]:g} mm" +
+            (empty ? " · Import a panel or add a sample plot to get started." : "");
     }
 
     private Task CanvasEdited(CanvasEdit edit)
@@ -171,23 +191,25 @@ public partial class MainWindow : Window
         object args = edit.NewBox is { } box
             ? new { figure = name, op = "resize", oid = edit.Oid, box = new[] { box.X, box.Y, box.Width, box.Height } }
             : new { figure = name, op = "move", oids = new[] { edit.Oid }, dx = edit.Delta.X, dy = edit.Delta.Y };
-        return During("Updating figure…", async () =>
-        {
-            var result = await engine!.CallAsync<EditResult>("edit", args);
-            ShowRender(result.Figure);
-            await ReadState(name);
-        });
+        return EditFigure(name, args, "Updating figure…");
     }
 
-    private Task History(string command) => shownFigure is not { } figure ? Task.CompletedTask :
+    private Task EditFigure(string figure, object args, string status, bool clearSelection = false) => During(status, async () =>
+    {
+        var result = await engine!.CallAsync<EditResult>("edit", args);
+        if (clearSelection) Page.Select(null);
+        ShowRender(result.Figure);
+        await ReadState(figure);
+    });
+
+    private Task History(string command) => project is null ? Task.CompletedTask :
         During(command == "undo" ? "Undoing…" : "Redoing…", async () =>
         {
-            try
-            {
-                var result = await engine!.CallAsync<EditResult>(command, new { figure });
-                ShowRender(result.Figure);
-            }
-            finally { await ReadState(figure); }
+            string? figure = shownFigure;
+            try { await engine!.CallAsync<JsonElement>(command); }
+            catch { await ReadState(figure); throw; }
+            Page.Select(null);
+            await RefreshProject(figure);
         });
 
     private async void UndoClicked(object sender, RoutedEventArgs e) => await History("undo");
@@ -196,16 +218,19 @@ public partial class MainWindow : Window
     private async void ExportClicked(object sender, RoutedEventArgs e)
     {
         if (!validFigure || shownFigure is not { } figure) return;
-        var dialog = new SaveFileDialog { Title = "Export figure", Filter = "PDF (*.pdf)|*.pdf", DefaultExt = ".pdf",
-            FileName = figure + ".pdf", InitialDirectory = project };
+        var dialog = new SaveFileDialog { Title = "Export figure", Filter = "PDF (*.pdf)|*.pdf|SVG (*.svg)|*.svg|PNG (*.png)|*.png",
+            FileName = figure, InitialDirectory = project };
         if (dialog.ShowDialog(this) != true) return;
-        await ExportPdf(figure, dialog.FileName);
+        await ExportFigure(figure, dialog.FileName);
     }
 
-    private Task ExportPdf(string figure, string path) => During("Exporting PDF…", async () =>
+    private Task ExportFigure(string figure, string path) => During("Exporting figure…", async () =>
     {
-        await engine!.CallAsync<JsonElement>("export", new { figure, path, format = "pdf" });
-        Status.Text = $"Exported {path}";
+        string format = Path.GetExtension(path).ToLowerInvariant();
+        if (format is not (".pdf" or ".svg" or ".png"))
+            throw new ArgumentException("Choose a .pdf, .svg, or .png filename.");
+        var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..] });
+        Status.Text = $"Exported {path}" + (result.Warnings is { Length: > 0 } warnings ? $" · {warnings[0]}" : "");
     });
 
     private async void HandleKey(object sender, KeyEventArgs e)
