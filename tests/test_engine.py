@@ -53,8 +53,61 @@ def test_move_and_undo(session):
     r = edit(session, op="move", oids=["1"], dx=3, dy=-1.5)
     assert 'fig.panel("panels/scatter.py", x=68, y=1.5, w=56, h=52)' in fig_text(session)
     assert el(r["figure"], "panel", 1)["box"][:2] == [68, 1.5]
-    session.undo({"figure": "fig1"})
+    r = session.undo({"figure": "fig1"})
+    assert r["ok"], r.get("error")
     assert fig_text(session) == before
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_move_undo_redo_preserves_line_endings(tmp_path, newline):
+    path = tmp_path / "fig1.py"
+    before = newline.join([
+        b"from fignimble import Figure",
+        b"fig = Figure(width=100, height=80)",
+        b"fig.rect(x=5, y=10, w=20, h=15)",
+        b"",
+    ])
+    path.write_bytes(before)
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        edit(s, op="move", oids=["0"], dx=3, dy=0)
+        after = before.replace(b"x=5", b"x=8")
+        assert path.read_bytes() == after
+        r = s.undo({"figure": "fig1"})
+        assert r["ok"], r.get("error")
+        assert path.read_bytes() == before
+        r = s.redo_({"figure": "fig1"})
+        assert r["ok"], r.get("error")
+        assert path.read_bytes() == after
+
+        # Another editor changed a different line. Undo must retain that edit.
+        path.write_bytes(after.replace(b"height=80", b"height=90"))
+        r = s.undo({"figure": "fig1"})
+        assert r["ok"], r.get("error")
+        assert path.read_bytes() == before.replace(b"height=80", b"height=90")
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("make, files", [
+    ("new_figure", ["fig1.py"]),
+    ("new_table", ["fig1.py", "tables/fig1.csv"]),
+])
+def test_new_figure_undo_redo(tmp_path, make, files):
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        r = getattr(s, make)({"name": "fig1"})
+        assert r["ok"], r.get("error")
+        paths = [tmp_path / name for name in files]
+        before = [path.read_bytes() for path in paths]
+        r = s.undo({})
+        assert r["ok"], r.get("error")
+        assert not any(path.exists() for path in paths)
+        r = s.redo_({})
+        assert r["ok"], r.get("error")
+        assert [path.read_bytes() for path in paths] == before
+    finally:
+        s.close()
 
 
 def test_resize_image_keeps_aspect(session):

@@ -167,7 +167,7 @@ class Plan:
             lst[:] = [q for q in lst if (q[0], q[1]) != (p[0], p[1]) or q[0] == q[1]]
             lst.append(p)
 
-    def texts(self) -> dict[str, tuple[str, str]]:
+    def texts(self) -> dict[str, str]:
         out = {}
         for path, patches in self.patches.items():
             src = self.sources[path]
@@ -178,10 +178,10 @@ class Plan:
                 except SyntaxError as exc:
                     raise EditError(f"the edit would break {Path(path).name} (line {exc.lineno}: {exc.msg}); "
                                     "nothing was changed") from None
-                out[path] = (src.text, new)
+                out[path] = new
         for path, (before, after) in self.raw.items():
             if before != after:
-                out[path] = (before, after)
+                out[path] = after
         return out
 
 
@@ -340,11 +340,23 @@ class Session:
 
     # --- undo ---
 
-    def _write(self, texts: dict[str, tuple[str, str]], label: str):
+    def _write(self, texts: dict[str, str], label: str):
         written = {}
-        for path, (before, after) in texts.items():
-            Path(path).write_text(after, encoding="utf-8")
-            written[path] = (before.encode(), after.encode())
+        for path, after in texts.items():
+            p = Path(path)
+            try:
+                before = p.read_bytes()
+            except FileNotFoundError:
+                before = None
+            data = after.encode("utf-8")
+            if before and b"\n" in before:
+                # Source edits work on normalized text. Keep the file's newline style, not the host's default.
+                data = data.replace(b"\r\n", b"\n")
+                if b"\n" not in before.replace(b"\r\n", b""):
+                    data = data.replace(b"\n", b"\r\n")
+            # Undo compares bytes, so record exactly what is on disk on both sides of the edit.
+            p.write_bytes(data)
+            written[path] = (before, data)
         if written:
             self.history.append({"label": label, "files": written})
             self.redo.clear()
@@ -449,7 +461,7 @@ class Session:
         with self.edit_lock:
             before = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
             if before != a["text"]:
-                self._write({path: (before, a["text"])}, f"Edit {Path(path).name}")
+                self._write({path: a["text"]}, f"Edit {Path(path).name}")
             return {"ok": True, **self._after(a.get("figure"), a.get("pxPerMM"))}
 
     # --- canvas edits ---
@@ -1718,10 +1730,7 @@ class Session:
             text = templates.figure_py(float(a.get("width", 183)), float(a.get("height", 120)))
         path = self.project / f"{name}.py"
         with self.edit_lock:
-            path.write_text(text, encoding="utf-8")
-            self.history.append({"label": "New Figure", "files": {str(path): (None, text.encode())}})
-            self.redo.clear()
-            self._sig = self.fingerprint()
+            self._write({str(path): text}, "New Figure")
         return {"ok": True, "name": name}
 
     def new_panel(self, a: dict) -> dict:
@@ -1911,12 +1920,7 @@ class Session:
         text = templates.table_figure_py(f"tables/{name}.csv", float(a.get("width", 90)), float(a.get("height", 40)))
         path = self.project / f"{name}.py"
         with self.edit_lock:
-            csv_path.write_text(tables.write_delimited(rows), encoding="utf-8")
-            path.write_text(text, encoding="utf-8")
-            self.history.append({"label": "New Table", "files": {str(path): (None, text.encode()),
-                                                                 str(csv_path): (None, csv_path.read_bytes())}})
-            self.redo.clear()
-            self._sig = self.fingerprint()
+            self._write({str(csv_path): tables.write_delimited(rows), str(path): text}, "New Table")
         # the figure the size of its table
         res = self.edit({"figure": name, "op": "fit_figure", "margin": 3})
         if res.get("ok") and self.history and self.history[-1]["label"].startswith("Figure"):
