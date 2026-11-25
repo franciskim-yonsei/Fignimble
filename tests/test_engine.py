@@ -200,6 +200,22 @@ def test_order(session):
     assert fig_text(session) == before
 
 
+def test_project_reload_keeps_modules_loaded_from_local_venv(tmp_path, monkeypatch):
+    from types import ModuleType
+    from fignimble.render import Renderer
+
+    for name, rel in (("_project_test_panel", "panel.py"), ("_project_test_dependency", ".venv/Lib/site-packages/dependency.pyd")):
+        file = tmp_path / rel
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.touch()
+        module = ModuleType(name)
+        module.__file__ = str(file)
+        monkeypatch.setitem(sys.modules, name, module)
+    Renderer(str(tmp_path))._purge_modules()
+    assert "_project_test_panel" not in sys.modules
+    assert "_project_test_dependency" in sys.modules
+
+
 def test_guarded_source_write_and_history_conflict(tmp_path):
     path = tmp_path / "fig1.py"
     original = 'from fignimble import Figure\nfig = Figure(90, 60)\n'
@@ -234,6 +250,19 @@ def test_reorder_reports_new_selection_for_multiline_element(tmp_path):
         r = edit(s, op="order", how="front", oids=["0"])
         assert r["select"] == ["1"]
         assert r["figure"]["elements"][-1]["props"]["fill"] == "red"
+    finally:
+        s.close()
+
+
+def test_edit_implicit_journal_style_keeps_preset(tmp_path):
+    path = tmp_path / "fig1.py"
+    path.write_text('from fignimble import Figure\nfig = Figure(journal="nature")\n', encoding="utf-8")
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        r = edit(s, op="style", props={"size": 11})
+        assert r["figure"]["style"]["props"]["journal"] == "nature"
+        assert r["figure"]["style"]["props"]["size"] == 11
+        assert 'Style.journal("nature", size=11)' in path.read_text(encoding="utf-8")
     finally:
         s.close()
 

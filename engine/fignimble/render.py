@@ -150,10 +150,19 @@ class Renderer:
     # --- running user code ---
 
     def _purge_modules(self):
-        root = str(self.project)
+        root = os.path.normcase(str(self.project)) + os.sep
+        prefix = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
         for name, mod in list(sys.modules.items()):
-            f = getattr(mod, "__file__", None) or ""
-            if name != "__main__" and f and os.path.isfile(f) and os.path.abspath(f).startswith(root + os.sep):
+            f = getattr(mod, "__file__", None)
+            if name == "__main__" or not f:
+                continue
+            location = os.path.normcase(os.path.abspath(f))
+            if not location.startswith(root) or (prefix.startswith(root) and location.startswith(prefix)):
+                continue
+            folders = location[len(root):].split(os.sep)[:-1]
+            if any(part.startswith(".") or part in SKIP_DIRS for part in folders):
+                continue
+            if os.path.isfile(f):
                 del sys.modules[name]
 
     def _enter(self):

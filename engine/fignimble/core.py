@@ -1578,7 +1578,14 @@ class Session:
                 return "Style"
         src, call = self._figure_call(plan, data)
         ref = srcedit.class_ref(src, "Style")
-        text = f"{ref}(" + ", ".join(f"{k}={srcedit.fmt(v)}" for k, v in a["props"].items()) + ")"
+        props = ", ".join(f"{k}={srcedit.fmt(v)}" for k, v in a["props"].items())
+        # An implicit journal/poster style must keep its preset when the editor first makes it explicit.
+        current = data["style"]["props"]
+        preset, key = ("journal", current.get("journal")) if current.get("journal") else ("poster", current.get("poster"))
+        if key:
+            text = f"{ref}.{preset}({srcedit.fmt(key)}" + (", " + props if props else "") + ")"
+        else:
+            text = f"{ref}({props})"
         plan.add(src.path, srcedit.set_args(src, call, "Figure", {"style": Raw(text)}, "the figure")
                  + srcedit.ensure_import(src, ref))
         return "Style"
