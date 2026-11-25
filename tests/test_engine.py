@@ -200,6 +200,29 @@ def test_order(session):
     assert fig_text(session) == before
 
 
+def test_guarded_source_write_and_history_conflict(tmp_path):
+    path = tmp_path / "fig1.py"
+    original = 'from fignimble import Figure\nfig = Figure(90, 60)\n'
+    path.write_bytes(original.replace("\n", "\r\n").encode())
+    s = Session(str(tmp_path), sys.executable)
+    args = {"file": str(path), "expected": original, "check_syntax": True}
+    try:
+        r = s.write_source({**args, "text": "def invalid("})
+        assert not r["ok"] and "line 1" in r["error"]
+        assert s.write_source({**args, "text": original.replace("90", "92")})["ok"]
+        edited = path.read_bytes()
+        assert b"Figure(92, 60)\r\n" in edited
+        assert not s.write_source({**args, "text": original})["ok"]
+        path.write_bytes(edited.replace(b"92", b"95"))
+        assert not s.undo_to({"n": 0})["ok"]
+        assert len(s.history) == 1 and b"95" in path.read_bytes()
+        path.write_bytes(edited)
+        assert s.undo_to({"n": 0})["ok"] and b"90" in path.read_bytes()
+        assert s.undo_to({"n": 1})["ok"] and path.read_bytes() == edited
+    finally:
+        s.close()
+
+
 def test_reorder_reports_new_selection_for_multiline_element(tmp_path):
     (tmp_path / "fig1.py").write_text(
         'from fignimble import Figure\nfig = Figure(90, 60)\n'

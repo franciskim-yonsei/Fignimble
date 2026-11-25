@@ -399,12 +399,13 @@ class Session:
         with self.edit_lock:
             if not self.history:
                 return {"ok": False, "error": "nothing to undo"}
-            e = self.history.pop()
+            e = self.history[-1]
             try:
                 self._restore(e["files"], 0)
             except UndoConflict as exc:
                 return {"ok": False, "error": f"Can't undo {e['label']}: {', '.join(exc.args[0])} changed since on the "
                                               "same lines (an agent or another editor), so it was left as it is."}
+            self.history.pop()
             self.redo.append(e)
             return {"ok": True, "label": e["label"], **self._after(a.get("figure"), a.get("pxPerMM"))}
 
@@ -426,11 +427,12 @@ class Session:
         with self.edit_lock:
             if not self.redo:
                 return {"ok": False, "error": "nothing to redo"}
-            e = self.redo.pop()
+            e = self.redo[-1]
             try:
                 self._restore(e["files"], 1)
             except UndoConflict as exc:
                 return {"ok": False, "error": f"Can't redo {e['label']}: {', '.join(exc.args[0])} changed since."}
+            self.redo.pop()
             self.history.append(e)
             return {"ok": True, "label": e["label"], **self._after(a.get("figure"), a.get("pxPerMM"))}
 
@@ -460,8 +462,16 @@ class Session:
             return {"ok": False, "error": "that file is not in the project"}
         with self.edit_lock:
             before = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
-            if before != a["text"]:
-                self._write({path: a["text"]}, f"Edit {Path(path).name}")
+            if "expected" in a and a["expected"] != before:
+                return {"ok": False, "error": f"{Path(path).name} changed on disk. Reopen it before applying edits."}
+            text = a["text"].replace("\r\n", "\n")
+            if before != text:
+                if a.get("check_syntax") and Path(path).suffix.lower() == ".py":
+                    try:
+                        ast.parse(text, filename=path)
+                    except SyntaxError as exc:
+                        return {"ok": False, "error": f"{Path(path).name} (line {exc.lineno}): {exc.msg}"}
+                self._write({path: text}, f"Edit {Path(path).name}")
             return {"ok": True, **self._after(a.get("figure"), a.get("pxPerMM"))}
 
     # --- canvas edits ---
@@ -1380,6 +1390,8 @@ class Session:
         """The figure's caption: {text} (empty: none). Written as fig.caption(...) after the figure's code."""
         text = str(a.get("text") or "").rstrip()
         cap = data.get("caption") or {}
+        if "expected" in a and a["expected"] != (cap.get("text") or ""):
+            raise EditError("the caption changed on disk; reopen it before applying edits")
         site = cap.get("site")
         lit = srcedit.text_literal(text)
         if site and site.get("file"):
