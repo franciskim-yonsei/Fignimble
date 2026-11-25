@@ -45,10 +45,14 @@ def main():
         where = os.path.expanduser(a["project"])
         if far and not os.path.isabs(where):           # a server folder as typed: from the home folder
             where = os.path.join(os.path.expanduser("~"), where)
-        s = Session(where, python)
+        s = Session(str(templates.project_root(where)), python)
         s.on_event = send
         app["s"] = s
-        return {"ok": True, "project": str(s.project)}
+        return {"ok": True, "project": str(s.project), **templates.marker_state(s.project)}
+
+    def add_marker(a):
+        p = templates.write_marker(need().project)
+        return {"ok": True, "path": str(p)}
 
     def requirements(a):
         from . import requirements as reqs
@@ -80,6 +84,7 @@ def main():
         "open": open_project,
         "close": close,
         "new_project": lambda a: templates.new_project(a["dir"], a.get("journal")),
+        "add_marker": add_marker,
         "requirements": requirements,
         "install": install,
         "state": lambda a: need().api_state(),

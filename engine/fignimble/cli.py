@@ -1,10 +1,12 @@
 """The fignimble command: render, check and export figures from a terminal (and let a coding agent see its work).
 
-    fignimble new myproject [--journal nature]     a new project: style.py and an empty fig1.py
-                                                   (--poster a0, 48x36, ...: a poster.py to start from)
+    fignimble new [folder] [--journal nature]      a new project (folder: fignimble): its fignimble.toml marker,
+                                                   style.py and an empty fig1.py (--poster a0, 48x36, ...: a
+                                                   poster.py to start from)
     fignimble snapshot fig1.py [--dpi 150]         render to .fignimble/snapshots/fig1.png and print the path
     fignimble info fig1.py [--json]                elements, boxes (mm), labels and preflight warnings
-    fignimble check [fig1.py ...]                  preflight warnings of every figure; exit status 1 if any
+    fignimble check [fig1.py ...]                  preflight warnings of every figure of the project this folder
+                                                   is in; exit status 1 if any
     fignimble table fig1.py 0 table1.docx          a table of a figure (its element number or name) as a Word
                                                    file; or fignimble table data.csv table1.docx
     fignimble export fig1.py fig1.pdf [--dpi 600]  PDF, SVG, EPS, PNG, TIFF, JPEG or PPTX (--cmyk, --outline for
@@ -30,6 +32,12 @@ def _project_of(fig: Path) -> Path:
     return fig.resolve().parent
 
 
+def _here() -> Path:
+    """The project the current folder is in (the nearest fignimble.toml at or above it), else the current folder."""
+    from .templates import find_project
+    return find_project(Path.cwd()) or Path.cwd()
+
+
 def _figures(project: Path) -> list[Path]:
     from .render import is_figure_source
     return [p for p in sorted(project.glob("*.py")) if is_figure_source(p.read_text(encoding="utf-8", errors="replace"))]
@@ -44,7 +52,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="fignimble", description="Multi-panel figures for publication, from Python.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("new", help="make a new project")
-    p.add_argument("folder")
+    p.add_argument("folder", nargs="?", default="fignimble", help="the new project's folder (default: fignimble)")
     p.add_argument("--journal", default="nature", help="a journal key from `fignimble journals` (nature, cell, bioinformatics, plos-computational-biology, ...), or none")
     p.add_argument("--poster", help="make a poster instead: a template from `fignimble journals` (a0, 48x36, 72x48, 24x36, ...)")
     p.add_argument("--landscape", action="store_true", help="the poster wider than tall")
@@ -70,7 +78,7 @@ def main(argv=None):
     p.add_argument("--crop-marks", action="store_true", help="crop marks outside the figure (PDF)")
     p = sub.add_parser("provenance", help="what an exported file was made from, checked against the project")
     p.add_argument("file")
-    p.add_argument("--project", help="the project folder (default: the current folder)")
+    p.add_argument("--project", help="the project folder (default: the project the current folder is in)")
     p = sub.add_parser("table", help="write a table as a Word, Excel, CSV or TSV file")
     p.add_argument("source", help="a table file (table1.py), a figure file (then the table's element number or "
                                   "name, if it has more than one) or a .csv/.tsv file")
@@ -105,10 +113,11 @@ def main(argv=None):
     if a.cmd == "new":
         from .templates import new_project
         r = new_project(a.folder, None if a.journal == "none" else a.journal, poster=a.poster, landscape=a.landscape)
-        print(f"made {r['project']} ({'poster.py, a poster to start from' if a.poster else 'style.py and an empty fig1.py'})")
+        print(f"made {r['project']} (fignimble.toml, "
+              f"{'poster.py, a poster to start from' if a.poster else 'style.py and an empty fig1.py'})")
         return 0
     if a.cmd == "provenance":
-        return _provenance(a.file, Path(a.project) if a.project else Path.cwd())
+        return _provenance(a.file, Path(a.project) if a.project else _here())
     if a.cmd == "journals":
         from . import journals
         from .journals import JOURNALS
@@ -201,7 +210,7 @@ def main(argv=None):
         _describe(res)
         return 0
     if a.cmd == "check":
-        figs = [Path(f) for f in a.figures] or _figures(Path.cwd())
+        figs = [Path(f) for f in a.figures] or _figures(_here())
         bad = 0
         for fig in figs:
             res = _renderer(fig).render(str(fig.resolve()), sprites=False)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import journals
@@ -126,24 +127,124 @@ def draw(fig, kind="lines"):
 '''
 
 
-def new_project(folder: str, journal: str | None = "nature", poster: str | None = None,
-                landscape: bool = False) -> dict:
-    """A new project folder with a style and a first figure, empty: no panels, nothing from another project.
-    With `poster` (a size: a0, a1, 36x48, ...), the first figure is a poster to start from."""
+DEFAULT_FOLDER = "fignimble"        # a new project's folder unless named otherwise: paper/fignimble/
+
+MARKER = "fignimble.toml"           # at a project's root: says Fignimble made it, which version, and where the root is
+
+
+def _version() -> str:
+    from . import __version__
+    return __version__
+
+
+def marker_text(version: str | None = None) -> str:
+    return (
+        "# A Fignimble project: publication figures written in Python (https://github.com/pachterlab/Fignimble).\n"
+        "# Each top-level .py file is a figure or a table, panels/ holds the code that draws their panels, and\n"
+        "# style.py the look they share. Open this folder in Fignimble, or run `fignimble check` in it.\n"
+        "\n"
+        "[project]\n"
+        f'fignimble = "{version or _version()}"    # the Fignimble version the project was made with\n'
+    )
+
+
+def write_marker(folder, version: str | None = None) -> Path:
+    """Put the marker in a project folder (one already there is left alone)."""
+    p = Path(folder) / MARKER
+    if not p.exists():
+        p.write_text(marker_text(version), encoding="utf-8")
+    return p
+
+
+def read_marker(folder) -> dict | None:
+    """What a project's marker says ({"fignimble": "0.4.0", ...}): {} when nothing in it is readable, None when the
+    folder has no marker."""
+    try:
+        text = (Path(folder) / MARKER).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        import tomllib                                   # Python 3.11+
+    except ImportError:
+        m = re.search(r'^\s*fignimble\s*=\s*"([^"]*)"', text, re.M)
+        return {"fignimble": m.group(1)} if m else {}
+    try:
+        return dict(tomllib.loads(text).get("project") or {})
+    except (tomllib.TOMLDecodeError, AttributeError, TypeError, ValueError):
+        return {}                                        # a mangled marker still marks the project
+
+
+def find_project(path) -> Path | None:
+    """The project a file or folder is in: the nearest folder at or above it with a marker, as git finds .git."""
+    p = Path(path).expanduser().resolve()
+    if not p.is_dir():
+        p = p.parent
+    for d in (p, *p.parents):
+        if (d / MARKER).is_file():
+            return d
+    return None
+
+
+def project_root(path) -> Path:
+    """The folder to open for `path`: itself when it is a project (marked, or figures made before markers), else the
+    marked project it is inside (a panels/ folder, a panel file), else its own folder."""
+    p = Path(path).expanduser().resolve()
+    d = p if p.is_dir() else p.parent
+    if (d / MARKER).is_file() or looks_like_project(d):
+        return d
+    return find_project(d) or d
+
+
+def marker_state(folder) -> dict:
+    """For the app when a project opens: whether it has a marker, the version it names, and whether that version is
+    newer than this Fignimble."""
+    m = read_marker(folder)
+    v = (m or {}).get("fignimble")
+    v = v if isinstance(v, str) else None
+    return {"marker": m is not None, "madeWith": v, "newer": newer_than_installed(v),
+            "version": _version(), "looksLikeProject": m is not None or looks_like_project(folder)}
+
+
+def looks_like_project(folder) -> bool:
+    """A folder of figures made before projects had a marker: it has a style.py or a top-level figure file."""
+    from .render import is_figure_source
     d = Path(folder)
+    if (d / "style.py").is_file():
+        return True
+    for p in d.glob("*.py"):
+        try:
+            if is_figure_source(p.read_text(encoding="utf-8", errors="replace")):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def newer_than_installed(version: str | None) -> bool:
+    """Whether a marker names a newer Fignimble than this one."""
+    def key(v: str):
+        return tuple(int(n) for n in re.findall(r"\d+", v)[:3])
+    return bool(version) and key(version) > key(_version())
+
+
+def new_project(folder: str | None = None, journal: str | None = "nature", poster: str | None = None,
+                landscape: bool = False) -> dict:
+    """A new project folder (`fignimble` unless named) with its marker, a style and a first figure, empty: no
+    panels, nothing from another project. With `poster` (a size: a0, a1, 36x48, ...), the first figure is a poster
+    to start from."""
+    d = Path(folder or DEFAULT_FOLDER)
     if d.exists() and any(p for p in d.iterdir() if not p.name.startswith(".")):
         raise FileExistsError(f"{d} is not empty")
     (d / "panels").mkdir(parents=True, exist_ok=True)
     (d / "images").mkdir(exist_ok=True)
+    write_marker(d)
+    (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
     if poster:
-        text = poster_py(poster, landscape)
-        (d / "poster.py").write_text(text, encoding="utf-8")
-        (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
+        (d / "poster.py").write_text(poster_py(poster, landscape), encoding="utf-8")
         return {"ok": True, "project": str(d.resolve()), "figure": "poster"}
     width = journals.width(journal, "double") if journal else 183
     (d / "style.py").write_text(style_py(journal), encoding="utf-8")
     (d / "fig1.py").write_text(figure_py(width, 100), encoding="utf-8")
-    (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
     return {"ok": True, "project": str(d.resolve()), "figure": "fig1"}
 
 
@@ -160,6 +261,7 @@ Fignimble and is not part of the project; don't edit it.)
 
 ## How a project is laid out
 
+- **`fignimble.toml`** marks the project's top folder and records the Fignimble version that made it. Leave it alone.
 - **Figure files** are the top-level `.py` files that make a `Figure` (`fig1.py`, `fig2.py`, ...). Each places
   elements on its figure, one call per element. Units are **millimeters**, from the figure's **top-left corner, y
   pointing down**.

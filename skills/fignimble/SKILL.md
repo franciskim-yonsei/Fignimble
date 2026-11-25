@@ -39,6 +39,9 @@ command runs the figure and panel code the way Fignimble does.
 
 ## How a project is laid out
 
+- **`fignimble.toml`** at the top marks the project (and the Fignimble version that made it). The project root is the
+  folder holding it; by convention the folder is called `fignimble`, inside the paper's repository. Leave the file
+  alone.
 - **Table files** (`table1.py`) make a `Table` instead: a table of the paper, laid out by itself (see below).
 - **Figure files** are the top-level `.py` files that make a `Figure` (`fig1.py`, `fig2.py`, `poster.py`). Each
   places elements on its figure, one call per element. Units are **millimeters**, from the figure's **top-left
@@ -52,7 +55,8 @@ command runs the figure and panel code the way Fignimble does.
   the 40 journals and the poster sizes.
 - `images/` holds pictures, `data/` data, `tables/` CSV tables, `requirements.txt` the packages panels import beyond
   matplotlib and NumPy. `.fignimble/` is Fignimble's cache: never edit it.
-- `fignimble new FOLDER --journal nature` (or `--poster a0`) makes a new project.
+- `fignimble new --journal nature` (or `--poster a0`) makes a new project in a folder called `fignimble`
+  (`fignimble new FOLDER` to name it otherwise).
 
 ```python
 from fignimble import *

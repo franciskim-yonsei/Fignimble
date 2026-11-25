@@ -370,15 +370,20 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         if code.dirty { code.save() }
         enqueue { [self] in
             guard useEngine(for: nil) else { return }
+            let r: [String: Any]
             do {
-                let r = try await engine.json("open", ["project": dir.path])
+                r = try await engine.json("open", ["project": dir.path])
                 project = r["project"] as? String ?? dir.path
             } catch { alert("Couldn't open \(dir.lastPathComponent)", error.localizedDescription); return }
+            // the engine opens the project a folder is in (a panels/ folder, a panel file: up to its fignimble.toml)
+            let root = URL(fileURLWithPath: project ?? dir.path)
+            if root.path != dir.path { fig = nil }
             remote = nil
-            MainController.noteRecent(project ?? dir.path)
-            NSDocumentController.shared.noteNewRecentDocumentURL(dir)
-            window.representedURL = dir
-            await opened(title: dir.lastPathComponent, figure: fig)
+            MainController.noteRecent(root.path)
+            NSDocumentController.shared.noteNewRecentDocumentURL(root)
+            window.representedURL = root
+            await opened(title: root.lastPathComponent, figure: fig)
+            checkMarker(r)
         }
     }
 
@@ -397,9 +402,11 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             busy("Connecting to \(r.host)…")
             remoteNeeds = nil
             guard useEngine(for: r) else { idle(); return }
+            var opening: [String: Any] = [:]
             do {
                 let res = try await engine.json("open", ["project": r.mirror])
                 project = res["project"] as? String ?? r.mirror
+                opening = res
             } catch {
                 idle()
                 engine.shutdown(wait: 2)                  // the tunnel that couldn't start the engine there
@@ -413,6 +420,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             MainController.noteRecent(r.recentKey)
             window.representedURL = nil
             await opened(title: r.title, figure: fig)
+            checkMarker(opening)
         }
     }
 
@@ -454,6 +462,34 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         fitWindowToScreen()
         explainProjectOnce()
         checkPackages(asked: false)
+    }
+
+    /// A project's fignimble.toml, which says at a glance that Fignimble made the folder and which version: offered
+    /// (once per project) for folders of figures made before projects had one, and a warning when it names a newer
+    /// Fignimble than this one.
+    func checkMarker(_ r: [String: Any]) {
+        guard let p = project, ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS"] == nil else { return }
+        if r["newer"] as? Bool == true {
+            toast("This project was made with Fignimble \(r["madeWith"] as? String ?? "") and this is \(r["version"] as? String ?? "an older one"): update Fignimble if something doesn't draw", error: true)
+            return
+        }
+        guard r["marker"] as? Bool == false, r["looksLikeProject"] as? Bool == true else { return }
+        var seen = UserDefaults.standard.stringArray(forKey: "markerOffered") ?? []
+        guard !seen.contains(p) else { return }
+        seen.append(p)
+        UserDefaults.standard.set(Array(seen.suffix(100)), forKey: "markerOffered")
+        enqueue { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = "Mark this folder as a Fignimble project?"
+            a.informativeText = "Fignimble can add a small file, fignimble.toml, to \((p as NSString).lastPathComponent). It tells anyone "
+                + "looking at the folder (or its repository) that its figures are made with Fignimble, and which version. "
+                + "Fignimble and the fignimble command also use it to find the project from any folder inside it."
+            a.addButton(withTitle: "Add fignimble.toml"); a.addButton(withTitle: "Not Now")
+            guard await a.beginSheetModal(for: self.window) == .alertFirstButtonReturn else { return }
+            if (try? await self.engine.json("add_marker")) != nil { self.toast("Added fignimble.toml") }
+            else { self.toast("Couldn't add fignimble.toml", error: true) }
+        }
     }
 
     @objc func checkPackagesNow(_ sender: Any?) { checkPackages(asked: true) }
@@ -1131,7 +1167,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     @objc func newProject(_ sender: Any?) {
         let p = NSSavePanel()
         p.message = "A new folder for the project's figures, panels and pictures"
-        p.nameFieldStringValue = "figures"
+        p.nameFieldStringValue = "fignimble"            // the convention: paper/fignimble/, marked by its fignimble.toml
         let journal = NSPopUpButton(frame: .zero, pullsDown: false)
         journal.menu?.addItem(withTitle: "No journal", action: nil, keyEquivalent: "")
         journal.menu?.addItem(.separator())

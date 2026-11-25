@@ -31,7 +31,8 @@ figure stays reproducible from the analysis and the user can rearrange it on the
 
 ## 2. Set up the project
 
-Use the user's project, or `fignimble new FOLDER --journal KEY` (ask which journal if unknown). Copy or link the data
+Use the user's project (a folder with a `fignimble.toml`), or run `fignimble new --journal KEY` in the paper's folder,
+which makes `fignimble/` (ask which journal if unknown). Copy or link the data
 the plots read into `data/` (ask before copying large files; a panel may read an absolute path, but the project is
 then not self-contained). Add the packages the code imports (pandas, seaborn, scanpy, ...) to `requirements.txt`.
 

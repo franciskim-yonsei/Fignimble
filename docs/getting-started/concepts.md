@@ -2,8 +2,13 @@
 
 ## A project is a folder
 
+By convention it is called `fignimble`, inside the paper's folder or repository (`mypaper/fignimble/`), and it is
+marked by a `fignimble.toml` at its top, so that anyone looking at the folder sees that its figures are made with
+Fignimble:
+
 ```text
-myfigures/
+mypaper/fignimble/
+├── fignimble.toml      marks the project, and the Fignimble version it was made with
 ├── style.py            the look every figure shares
 ├── fig1.py             a figure file
 ├── fig2.py
@@ -15,6 +20,12 @@ myfigures/
 ├── requirements.txt    packages the panels need (optional)
 └── .fignimble/         renders and caches (safe to delete; git-ignored)
 ```
+
+**`fignimble.toml`** says the folder is a Fignimble project and which version of Fignimble made it. Fignimble and
+the `fignimble` command find the project from any folder inside it by looking for it, as git looks for `.git`:
+opening `panels/` opens the project, and `fignimble check` run in `panels/` checks the project's figures. New
+projects get one; when you open a folder of figures made before projects had one, Fignimble offers to add it. When it
+names a newer Fignimble than yours, Fignimble says so.
 
 **Figure files** are the top-level `.py` files that make a `Figure`. **Panel files** have a function
 `draw(fig, ...)`; one file can hold several (`function="bars"`). **`style.py`** holds the `Style` every figure

@@ -4,13 +4,16 @@ This walk-through makes a two-panel figure, letters it, styles it for a journal 
 
 ## 1. Make a project
 
-Choose **File ▸ New Project…** (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd>), pick a folder name and the journal to style
-for. Fignimble makes the folder with two files and opens it:
+Choose **File ▸ New Project…** (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd>), pick where the folder goes (it is called
+`fignimble` unless you rename it; inside your paper's folder is a good place) and the journal to style for. Fignimble
+makes the folder and opens it:
 
+- `fignimble.toml`: marks the folder as a Fignimble project (and records the Fignimble version).
 - `style.py`: the look every figure of the project shares (font, text size, line widths, panel labels, colors).
 - `fig1.py`: the first figure, empty, at the journal's double-column width.
 
-A project is just a folder. Put it under git, open it in another editor, or send it to a colleague.
+From a terminal, `fignimble new` does the same (in a folder called `fignimble`, or
+`fignimble new FOLDER`). A project is just a folder. Put it under git, open it in another editor, or send it to a colleague.
 
 ## 2. Add a panel
 

@@ -1730,6 +1730,12 @@ class Session:
 
     # --- files the editor adds ---
 
+    def _mark_new_project(self):
+        """The first figure or table of a folder opened empty makes it a project: give it its marker. (A folder that
+        already had figures but no marker is asked about by the app instead.)"""
+        if templates.read_marker(self.project) is None and not self.figures():
+            templates.write_marker(self.project)
+
     def new_figure(self, a: dict) -> dict:
         """A new figure file: {name, width, height, journal?}, or a poster: {name, poster, landscape?}."""
         name = a.get("name") or ("poster" if a.get("poster") else "fig")
@@ -1739,6 +1745,7 @@ class Session:
             name = f"{base}{n}"
         if not name.isidentifier():
             return {"ok": False, "error": f"{name} can't be a figure name: use letters, digits and _"}
+        self._mark_new_project()
         if a.get("poster"):
             try:
                 text = templates.poster_py(a["poster"], bool(a.get("landscape")),
@@ -1999,6 +2006,7 @@ class Session:
             n += 1
             name = f"{base}{n}"
         nr, nc = max(1, int(a.get("rows", 4))), max(1, int(a.get("cols", 3)))
+        self._mark_new_project()
         rows = [["" for _ in range(nc)] for _ in range(nr)]
         (self.project / "tables").mkdir(exist_ok=True)
         csv_path = self.project / "tables" / f"{name}.csv"

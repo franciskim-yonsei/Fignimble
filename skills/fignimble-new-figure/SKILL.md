@@ -22,10 +22,11 @@ the snapshot after each step.
 - Find `fignimble` (`command -v fignimble`, else `/Applications/Fignimble.app/Contents/Resources/bin/fignimble` or the
   same under `~/Applications`). If it is missing, tell the user to install Fignimble and use **Fignimble ▸ Install
   Command Line Tool…**.
-- A project is a folder with `style.py` and figure files. If the user names one, work there. If there is none, ask
-  which journal the paper is for (or use the one they named), then
-  `fignimble new FOLDER --journal KEY` (`fignimble journals` lists the keys: `nature`, `cell`, `science`,
-  `plos-computational-biology`, `bioinformatics`, `elife`, ...). It writes `style.py` and an empty `fig1.py` at the
+- A project is a folder with a `fignimble.toml` (older ones: `style.py` and figure files), usually called
+  `fignimble`. If the user names one, work there; otherwise look for a `fignimble.toml` in this folder, above it or
+  just below it. If there is none, ask which journal the paper is for (or use the one they named), then run
+  `fignimble new --journal KEY` in the paper's folder (it makes `fignimble/`; `fignimble new FOLDER` names it) (`fignimble journals` lists the keys: `nature`, `cell`, `science`,
+  `plos-computational-biology`, `bioinformatics`, `elife`, ...). It writes `fignimble.toml`, `style.py` and an empty `fig1.py` at the
   journal's double-column width.
 - For an existing project, read `style.py`, the figure file and the panels it already uses before adding anything, so
   new panels match how the others are written.

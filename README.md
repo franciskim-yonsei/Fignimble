@@ -43,6 +43,8 @@ def draw(fig, genes=("GAPDH", "CD3E")):
     ...
 ```
 
+A project is a folder, by convention `fignimble/` in the paper's repository: a `fignimble.toml` at its top (which
+marks it, and the Fignimble version that made it), `style.py`, the figure files, and `panels/`, `images/` and `data/`.
 Coordinates are millimetres from the top-left corner, y down, as in Illustrator. One call per element, with literal
 numbers, so that moving something on the canvas is a one-number change to its line of code.
 
@@ -237,7 +239,7 @@ fignimble info fig1.py          # every element's box in mm, the labels, preflig
 fignimble check                 # preflight every figure; exit status 1 on problems
 fignimble export fig1.py fig1.pdf --dpi 600   # --journal cell: its resolutions (default: the style's journal)
 fignimble export table1.py table1.docx         # a table as a Word table, with its title and notes
-fignimble new myfigures --journal cell
+fignimble new --journal cell       # a project in ./fignimble, marked by fignimble.toml
 fignimble journals
 ```
 
