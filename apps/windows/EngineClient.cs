@@ -17,13 +17,13 @@ internal sealed class EngineClient : IDisposable
 
     public event Action<string>? Notification;
     public bool Running => !process.HasExited;
+    public string Python { get; }
+    public string EngineRoot { get; }
 
-    public EngineClient()
+    public EngineClient(string python)
     {
-        string root = FindEngine();
-        string python = Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON") ??
-            (File.Exists(Path.Combine(root, "..", ".venv", "Scripts", "python.exe"))
-                ? Path.GetFullPath(Path.Combine(root, "..", ".venv", "Scripts", "python.exe")) : "python.exe");
+        string root = EngineRoot = FindEngine();
+        Python = python;
         var utf8 = new UTF8Encoding(false);
         var start = new ProcessStartInfo(python)
         {
@@ -34,6 +34,8 @@ internal sealed class EngineClient : IDisposable
         foreach (string arg in new[] { "-u", "-m", "fignimble.rpc" }) start.ArgumentList.Add(arg);
         start.Environment.TryGetValue("PYTHONPATH", out string? pythonPath);
         start.Environment["PYTHONPATH"] = string.IsNullOrEmpty(pythonPath) ? root : root + Path.PathSeparator + pythonPath;
+        // The worker should use the same interpreter that was actually launched (sys.executable).
+        start.Environment.Remove("FIGNIMBLE_PYTHON");
         start.Environment["PYTHONUTF8"] = "1";
         start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
         process = Process.Start(start) ?? throw new InvalidOperationException("Could not launch Python.");
@@ -48,6 +50,21 @@ internal sealed class EngineClient : IDisposable
         };
         process.BeginErrorReadLine();
         reader = ReadAsync();
+    }
+
+    public static string ResolvePython(string? project)
+    {
+        string? configured = Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON");
+        if (!string.IsNullOrWhiteSpace(configured)) return configured;
+        string? local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string[] candidates = [
+            .. (project is null ? Array.Empty<string>() : new[] { Path.Combine(project, ".venv", "Scripts", "python.exe"),
+                Path.Combine(project, "venv", "Scripts", "python.exe") }),
+            Path.GetFullPath(Path.Combine(FindEngine(), "..", ".venv", "Scripts", "python.exe")),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "python", "Scripts", "python.exe")),
+            Path.Combine(local, "Fignimble", "python", "Scripts", "python.exe")
+        ];
+        return candidates.FirstOrDefault(File.Exists) ?? "python.exe";
     }
 
     private static string FindEngine()
@@ -149,20 +166,25 @@ internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool Ca
 internal sealed record FigureEntry(string Name);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
     FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal,
-    FigureGuide[]? Guides, FigureCaption? Caption);
+    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle);
+internal sealed record FigureStyle(Dictionary<string, JsonElement> Props);
 internal sealed record FigureGuide(double? X, double? Y);
 internal sealed record FigureCaption(string? Text);
 internal sealed record FigureWarning(string Level, string Message);
 internal sealed record FigureElement(string Oid, string? Kind, double[]? Box, Sprite? Sprite, string? Parent,
     string? Host, ElementProperties? Props, string? Method, string? Panel, string? Text, string? Group,
-    SourceLocation? Code, PanelText[]? Texts);
+    SourceLocation? Code, PanelText[]? Texts, LayoutDivider[]? Dividers);
+internal sealed record LayoutDivider(string Axis, double At, double From, double To, bool Editable);
 internal sealed record SourceLocation(string? File);
-internal sealed record PanelText(string Key, string Text)
+internal sealed record PanelText(string Key, string Text, double[]? Box)
 {
     public override string ToString() => $"{Key}: {Text}";
 }
 internal sealed record ElementProperties(bool Locked, bool Hidden, string? Name, string? Source, string? Text,
-    string? Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells);
+    JsonElement Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells)
+{
+    public string? LabelText => Label.ValueKind == JsonValueKind.String ? Label.GetString() : null;
+}
 internal sealed record RenderJournal(string Key);
 internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths);
 internal sealed record JournalChoice(string Key, string Name, Dictionary<string, double>? Widths = null)

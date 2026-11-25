@@ -13,6 +13,8 @@ namespace Fignimble.Windows;
 public partial class MainWindow
 {
     private bool editingSource;
+    private (string Project, string[] Code)? copiedLayers;
+    private sealed record CopiedCode(string[] Code);
     private sealed record SourceFile(string Path, string Name)
     {
         public override string ToString() => Name;
@@ -33,6 +35,8 @@ public partial class MainWindow
             menu.Items.Add(item);
         }
         Add("Edit caption…", EditCaption, validFigure);
+        Add("Plot style…", () => EditStyle(false), validFigure);
+        Add("Panel lettering style…", () => EditStyle(true), validFigure);
         Add("Edit history…", ChooseHistory, state?.CanUndo == true || state?.CanRedo == true);
         menu.Items.Add(new Separator());
         Add("Add vertical guide…", () => ChooseGuide("x"), validFigure);
@@ -48,11 +52,15 @@ public partial class MainWindow
         Add("Edit plot text…", EditPlotText, editable && layer?.Kind == "panel" && layer.Texts is { Length: > 0 });
         Add("Crop image…", CropImage, editable && layer?.Kind == "image" && FigureCanvas.HasBox(layer));
         Add("Rotate image…", RotateImage, editable && layer?.Kind == "image");
+        Add("Add image zoom inset", AddImageInset, editable && layer?.Kind == "image");
+        Add("Add calibrated scale bar…", ChooseScaleBar, editable && layer?.Kind == "image");
         menu.Items.Add(new Separator());
         Add("Export all figures as PDF…", ChooseBatchFolder, state?.Figures is { Length: > 0 });
         Add("Export selected table…", ChooseTableExport, validFigure && Page.Selection?.Kind == "table");
-        Add("Copy figure as image", CopyFigureImage, validFigure);
+        Add("Copy figure (vector + bitmap)", CopyFigureImage, validFigure);
         Add("Paste image", PasteFigureImage, validFigure);
+        Add("Copy editable layers", CopyLayers, validFigure && Page.SelectedIds.Count > 0);
+        Add("Paste editable layers", PasteLayers, validFigure && CanPasteLayers());
         menu.IsOpen = true;
     }
 
@@ -180,10 +188,38 @@ public partial class MainWindow
                 await engine!.CallAsync<ExportResult>("export", new { figure, path, format = "png", dpi = 300 });
                 using var stream = File.OpenRead(path);
                 var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                Clipboard.SetImage(decoder.Frames[0]);
-                Status.Text = "Copied the figure as a 300 dpi bitmap.";
+                string svg = Path.Combine(folder.FullName, "figure.svg"), pdf = Path.Combine(folder.FullName, "figure.pdf");
+                await engine!.CallAsync<ExportResult>("export", new { figure, path = svg, format = "svg", dpi = 300 });
+                await engine!.CallAsync<ExportResult>("export", new { figure, path = pdf, format = "pdf", dpi = 300 });
+                var data = new DataObject();
+                data.SetImage(decoder.Frames[0]);
+                using var svgStream = new MemoryStream(File.ReadAllBytes(svg));
+                using var pdfStream = new MemoryStream(File.ReadAllBytes(pdf));
+                data.SetData("image/svg+xml", svgStream, false);
+                data.SetData("Portable Document Format", pdfStream, false);
+                Clipboard.SetDataObject(data, copy: true);
+                Status.Text = "Copied SVG, PDF, and a 300 dpi bitmap. The receiving app chooses the format.";
             }
             finally { folder.Delete(recursive: true); }
+        });
+
+    private bool CanPasteLayers() => copiedLayers is { } copy && string.Equals(project, copy.Project, StringComparison.OrdinalIgnoreCase);
+
+    private Task CopyLayers() => !validFigure || project is not { } folder || shownFigure is not { } figure ||
+        Page.SelectedIds.Count == 0 ? Task.CompletedTask : During("Copying selected layers…", async () =>
+        {
+            var result = await engine!.CallAsync<CopiedCode>("copy", new { figure, oids = Page.SelectedIds });
+            copiedLayers = (folder, result.Code);
+            Status.Text = "Copied editable layers. Paste them into any figure of this project from More or with Ctrl+V.";
+        });
+
+    private Task PasteLayers() => !validFigure || shownFigure is not { } figure || !CanPasteLayers() ? Task.CompletedTask :
+        During("Pasting editable layers…", async () =>
+        {
+            var result = await engine!.CallAsync<EditResult>("paste", new { figure, code = copiedLayers!.Value.Code, dx = 3, dy = 3 });
+            ShowRender(result.Figure);
+            Page.SelectIds(result.Select ?? []);
+            await ReadState(figure);
         });
 
     private Task PasteFigureImage() => !validFigure || currentRender is not { } render ? Task.CompletedTask :

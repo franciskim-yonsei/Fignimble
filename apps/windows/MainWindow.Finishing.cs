@@ -58,7 +58,7 @@ public partial class MainWindow
         if (layer.Kind is "panel" or "image")
         {
             var dialog = new FormDialog(this, "Panel label");
-            string? label = layer.Props?.Label;
+            string? label = layer.Props?.LabelText;
             string mode = label is null ? "None" : label == "auto" ? "Automatic" : "Custom";
             var choice = dialog.Choice("Lettering", new[] { "Automatic", "Custom", "None" }, mode);
             var text = dialog.Text("Custom label", mode == "Custom" ? label! : "");

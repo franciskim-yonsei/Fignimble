@@ -25,11 +25,20 @@
         <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
         <Button x:Name="ExportButton" Click="ExportClicked" Padding="8,4">_Export…</Button>
         <Button x:Name="MoreButton" Click="MoreClicked" Padding="8,4">More ▾</Button>
+        <Button x:Name="TerminalButton" Click="TerminalClicked" Padding="8,4">Terminal</Button>
       </ToolBar>
     </ToolBarTray>
     <Border DockPanel.Dock="Bottom" BorderBrush="#D0D0D0" BorderThickness="0,1,0,0" Padding="8,4">
       <TextBlock x:Name="Status" TextWrapping="Wrap" AutomationProperties.Name="Status" />
     </Border>
+    <DockPanel x:Name="TerminalDrawer" DockPanel.Dock="Bottom" Height="250" Visibility="Collapsed" Background="#1B1B1E">
+      <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Background="#E6E8EC">
+        <TextBlock Text="Project terminal" FontWeight="SemiBold" Margin="8,4" />
+        <Button Content="Restart shell" Click="RestartShellClicked" Padding="6,2" Margin="3" />
+        <Button Content="Hide" Click="TerminalClicked" Padding="6,2" Margin="3" />
+      </StackPanel>
+      <ContentControl x:Name="TerminalHost" />
+    </DockPanel>
     <Grid>
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="175" MinWidth="120" />
@@ -61,9 +70,16 @@
           <TextBlock x:Name="ZoomText" Margin="8,2,0,0" Text="Fit" />
         </StackPanel>
         <Grid ClipToBounds="True">
-          <TextBlock x:Name="EmptyCanvas" Text="Open a folder containing a Fignimble figure (.py)."
+          <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="20"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <local:FigureRuler x:Name="TopRuler" Grid.Column="1" Cursor="SizeWE" ToolTip="Drag out a vertical guide; drag an existing mark to move it."
+                             MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
+          <local:FigureRuler x:Name="LeftRuler" Grid.Row="1" Vertical="True" Cursor="SizeNS" ToolTip="Drag out a horizontal guide; drag an existing mark to move it."
+                             MouseLeftButtonDown="RulerDown" MouseMove="RulerMove" MouseLeftButtonUp="RulerUp" LostMouseCapture="RulerLost"/>
+          <TextBlock x:Name="EmptyCanvas" Grid.Row="1" Grid.Column="1" Text="Open a folder containing a Fignimble figure (.py)."
                      HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="16" />
-          <ScrollViewer x:Name="Viewport" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+          <ScrollViewer x:Name="Viewport" Grid.Row="1" Grid.Column="1" ScrollChanged="ViewportScrolled"
+                        HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                         SizeChanged="ViewportResized" PreviewMouseWheel="ViewportWheel" PanningMode="Both"
                         PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded" PreviewMouseMove="PanMoved"
                         LostMouseCapture="PanLost">

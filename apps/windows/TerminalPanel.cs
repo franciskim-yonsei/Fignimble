@@ -1,0 +1,197 @@
+using System.IO;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
+
+// Adapted from Pachter Lab's Manimble (BSD-2-Clause); see the repository LICENSE.
+namespace Fignimble.Windows;
+
+public sealed class TerminalPanel : Border, IDisposable
+{
+    readonly WebView2 web = new() { DefaultBackgroundColor = System.Drawing.Color.FromArgb(0x1b, 0x1b, 0x1e) };
+    readonly TextBlock message = new() { Foreground = Brushes.Gray, Margin = new Thickness(12), TextWrapping = TextWrapping.Wrap };
+    ConPty? pty;
+    bool ready;
+    short cols = 100, rows = 24;
+    string? cwd, python, engineRoot;
+    bool initializing, disposed;
+    int generation;
+    const string PageUri = "https://terminal.fignimble/terminal.html";
+    readonly System.Text.StringBuilder pending = new();
+    readonly object pendingGate = new();
+    System.Windows.Threading.DispatcherTimer? flush;
+
+    public bool IsRunning => pty != null;
+
+    public TerminalPanel()
+    {
+        Background = new SolidColorBrush(Color.FromRgb(0x1b, 0x1b, 0x1e));
+        var g = new Grid();
+        g.Children.Add(web);
+        g.Children.Add(message);
+        Child = g;
+        Loaded += async (_, _) => await Init();
+    }
+
+    async Task Init()
+    {
+        if (initializing || disposed || web.CoreWebView2 != null) return;
+        initializing = true;
+        try
+        {
+            var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Fignimble", "WebView2");
+            var env = await CoreWebView2Environment.CreateAsync(null, data);
+            if (disposed) return;
+            await web.EnsureCoreWebView2Async(env);
+            if (disposed) return;
+            var core = web.CoreWebView2!;
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
+            core.SetVirtualHostNameToFolderMapping("terminal.fignimble", Path.Combine(AppContext.BaseDirectory, "Terminal"),
+                                                              CoreWebView2HostResourceAccessKind.Deny);
+            core.NavigationStarting += (_, args) => args.Cancel = !string.Equals(args.Uri, PageUri, StringComparison.Ordinal);
+            core.NewWindowRequested += (_, args) => args.Handled = true;
+            core.WebMessageReceived += OnMessage;
+            core.Navigate(PageUri);
+            message.Visibility = Visibility.Collapsed;
+        }
+        catch (Exception e)
+        {
+            message.Text = "The terminal needs the Microsoft Edge WebView2 runtime: " + e.Message;
+        }
+        finally { initializing = false; }
+    }
+
+    public void Start(string workDir, string? pythonExe, string sourceRoot)
+    {
+        Stop();
+        cwd = workDir; python = pythonExe; engineRoot = sourceRoot;
+        if (ready) Spawn();
+    }
+
+    void Spawn()
+    {
+        if (cwd == null || !Directory.Exists(cwd)) return;
+        var env = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(e => (string)e.Key, e => (string?)e.Value ?? "", StringComparer.OrdinalIgnoreCase);
+        env["FIGNIMBLE_PROJECT"] = cwd;
+        env["PYTHONPATH"] = engineRoot + (env.TryGetValue("PYTHONPATH", out string? prior) && prior.Length > 0 ? Path.PathSeparator + prior : "");
+        env["TERM"] = "xterm-256color";
+        env["COLORTERM"] = "truecolor";
+        if (python is not null && Path.IsPathFullyQualified(python))
+        {
+            string scripts = Path.GetDirectoryName(python)!;
+            env["PATH"] = scripts + Path.PathSeparator + env.GetValueOrDefault("PATH");
+            if (Path.GetDirectoryName(scripts) is { } root && File.Exists(Path.Combine(root, "pyvenv.cfg")))
+                env["VIRTUAL_ENV"] = root;
+        }
+        string systemPowerShell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        string shell = $"\"{systemPowerShell}\" -NoLogo";
+        int thisRun = generation;
+        try
+        {
+            pty = ConPty.Start(shell, cwd, env, cols, rows, s => OnOutput(thisRun, s), () => Dispatcher.BeginInvoke(() =>
+            {
+                if (generation != thisRun || pty is not { } ended) return;
+                pty = null;
+                _ = Task.Run(ended.Dispose);
+                OnOutput(thisRun, "\r\n[Shell exited. Use Restart shell to open another.]\r\n");
+            }));
+        }
+        catch (Exception e)
+        {
+            Send(new { type = "out", data = "Could not start the shell: " + e.Message + "\r\n" });
+        }
+    }
+
+    public void Stop()
+    {
+        Interlocked.Increment(ref generation);
+        cwd = null;
+        var p = pty;
+        pty = null;
+        if (p is not null) { p.RequestStop(); _ = Task.Run(p.Dispose); }
+        lock (pendingGate) pending.Clear();
+        if (ready) Send(new { type = "clear" });
+    }
+
+    public void FocusTerminal()
+    {
+        web.Focus();
+        Send(new { type = "focus" });
+    }
+
+    /// Types `text` into the shell (as if pasted), e.g. a command to start an agent.
+    public void Type(string text) => pty?.Write(text);
+
+    // output arrives in many small pieces: batch it so the page gets a few messages a second, not thousands
+    void OnOutput(int thisRun, string s)
+    {
+        lock (pendingGate)
+        {
+            if (Volatile.Read(ref generation) != thisRun) return;
+            pending.Append(s);
+        }
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (disposed || flush != null) return;
+            flush = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            flush.Tick += (_, _) =>
+            {
+                string chunk;
+                lock (pendingGate) { chunk = pending.ToString(); pending.Clear(); }
+                if (chunk.Length > 0) Send(new { type = "out", data = chunk });
+                else { flush!.Stop(); flush = null; }
+            };
+            flush.Start();
+        });
+    }
+
+    void Send(object msg)
+    {
+        try { web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(msg)); } catch { }
+    }
+
+    void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        if (!string.Equals(e.Source, PageUri, StringComparison.Ordinal)) return;
+        using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+        JsonElement m = doc.RootElement;
+        if (!m.TryGetProperty("type", out var type)) return;
+        switch (type.GetString())
+        {
+            case "ready":
+                ready = true;
+                cols = (short)Math.Clamp(m.GetProperty("cols").GetInt32(), 10, 1000);
+                rows = (short)Math.Clamp(m.GetProperty("rows").GetInt32(), 3, 500);
+                if (pty == null && cwd != null) Spawn();
+                break;
+            case "in":
+                pty?.Write(m.GetProperty("data").GetString() ?? "");
+                break;
+            case "resize":
+                cols = (short)Math.Clamp(m.GetProperty("cols").GetInt32(), 10, 1000);
+                rows = (short)Math.Clamp(m.GetProperty("rows").GetInt32(), 3, 500);
+                pty?.Resize(cols, rows);
+                break;
+            case "copy":
+                try { Clipboard.SetText(m.GetProperty("data").GetString() ?? ""); } catch { }
+                break;
+            case "paste":
+                try { if (Clipboard.ContainsText()) Send(new { type = "paste", data = Clipboard.GetText() }); } catch { }
+                break;
+        }
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Stop();
+        flush?.Stop();
+        web.Dispose();
+    }
+}

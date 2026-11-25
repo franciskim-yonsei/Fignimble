@@ -145,7 +145,14 @@ public partial class MainWindow
             if (field.Text.Trim() != FormatMm(current[i]) && Math.Abs(value - current[i]) > 0.00001) props.Add(key, value);
         }
         if (props.Count == 0) return Task.CompletedTask;
-        object args = panel is null ? new { figure, op = "figure", props } : new { figure, op = "set", oid = panel.Oid, props };
+        object args = panel switch
+        {
+            null => new { figure, op = "figure", props },
+            { Kind: "inset" } => new { figure, op = "resize", oid = panel.Oid, box = new[]
+                { props.GetValueOrDefault("x", current[0]), props.GetValueOrDefault("y", current[1]),
+                    props.GetValueOrDefault("w", current[2]), props.GetValueOrDefault("h", current[3]) } },
+            _ => new { figure, op = "set", oid = panel.Oid, props }
+        };
         return EditFigure(figure, args, "Applying geometry…");
     }
 

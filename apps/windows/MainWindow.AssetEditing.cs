@@ -21,11 +21,29 @@ public partial class MainWindow
         foreach (var row in cells) data.Rows.Add(row.Select(c => (object)Cell(c)).ToArray());
         var dialog = new FormDialog(this, "Edit table cells") { Width = 700, ResizeMode = ResizeMode.CanResize };
         dialog.Note("The grid includes the header row, when present. Apply saves all cells as one undo step.");
-        var grid = new DataGrid { ItemsSource = data.DefaultView, Height = 300, CanUserAddRows = false, CanUserDeleteRows = false,
+        var grid = new DataGrid { ItemsSource = data.DefaultView, Height = 300, CanUserAddRows = true, CanUserDeleteRows = true,
             CanUserSortColumns = false, CanUserReorderColumns = false, AutoGenerateColumns = true };
-        dialog.Add("Cells", grid);
-        if (!dialog.Confirm("Apply", () => grid.CommitEdit(DataGridEditingUnit.Cell, true) && grid.CommitEdit(DataGridEditingUnit.Row, true)
-            ? null : "Finish editing the selected cell.")) return Task.CompletedTask;
+        dialog.Add("Cells (use the blank row to add one; Delete on a row header removes it)", grid);
+        bool Commit() => grid.CommitEdit(DataGridEditingUnit.Cell, true) && grid.CommitEdit(DataGridEditingUnit.Row, true);
+        void RefreshGrid() { grid.ItemsSource = null; grid.ItemsSource = data.DefaultView; }
+        var add = new Button { Content = "Add column" };
+        add.Click += (_, _) =>
+        {
+            if (!Commit()) return;
+            data.Columns.Add($"Column {data.Columns.Count + 1}", typeof(string));
+            RefreshGrid();
+        };
+        var remove = new Button { Content = "Remove last column" };
+        remove.Click += (_, _) =>
+        {
+            if (data.Columns.Count <= 1 || !Commit()) return;
+            data.Columns.RemoveAt(data.Columns.Count - 1);
+            RefreshGrid();
+        };
+        dialog.Add("Columns", add);
+        dialog.Add("", remove);
+        if (!dialog.Confirm("Apply", () => !Commit() ? "Finish editing the selected cell." :
+            data.Rows.Count == 0 ? "Keep at least one row." : null)) return Task.CompletedTask;
         string[][] rows = data.Rows.Cast<DataRow>().Select(r => r.ItemArray.Select(v => v?.ToString() ?? "").ToArray()).ToArray();
         return StillEditing(inputRender) ? ApplyTableCells(figure, layer.Oid, rows) : Task.CompletedTask;
     }
@@ -46,6 +64,15 @@ public partial class MainWindow
         return dialog.Confirm("Apply", () => pick.SelectedItem is PanelText ? null : "Select a plot label.") &&
             pick.SelectedItem is PanelText selected && selected.Text != text.Text && StillEditing(inputRender)
             ? ApplyPlotText(figure, layer.Oid, selected.Key, selected.Text, text.Text) : Task.CompletedTask;
+    }
+
+    private Task EditClickedPlotText(FigureElement layer, PanelText hit)
+    {
+        if (shownFigure is not { } figure || currentRender is not { } original || !FigureCanvas.Unlocked(layer)) return Task.CompletedTask;
+        var dialog = new FormDialog(this, "Edit plot text");
+        var text = dialog.Text(hit.Key, hit.Text);
+        return dialog.Confirm("Apply", () => null) && text.Text != hit.Text && StillEditing(original)
+            ? ApplyPlotText(figure, layer.Oid, hit.Key, hit.Text, text.Text) : Task.CompletedTask;
     }
 
     private Task ApplyPlotText(string figure, string oid, string key, string old, string text) => EditFigure(figure,

@@ -130,6 +130,12 @@ public partial class MainWindow
             item.Click += async (_, _) => await EditLayers(op);
             menu.Items.Add(item);
         }
+        var make = new MenuItem { Header = "Make patchwork layout", IsEnabled = CanMakeLayout() };
+        make.Click += async (_, _) => await MakeLayout();
+        var release = new MenuItem { Header = "Release layout", IsEnabled = Page.Selection is { Kind: "layout" } layer && FigureCanvas.Unlocked(layer) };
+        release.Click += async (_, _) => await ReleaseLayout();
+        menu.Items.Add(make);
+        menu.Items.Add(release);
         menu.IsOpen = true;
     }
 
@@ -156,6 +162,9 @@ public partial class MainWindow
 
     private Task? FigureShortcut(Key key, ModifierKeys mods)
     {
+        bool editingCanvas = Page.IsKeyboardFocusWithin || Layers.IsKeyboardFocusWithin;
+        if (editingCanvas && mods == ModifierKeys.Control && key == Key.C && Page.SelectedIds.Count > 0) return CopyLayers();
+        if (editingCanvas && mods == ModifierKeys.Control && key == Key.V && CanPasteLayers()) return PasteLayers();
         if (mods == ModifierKeys.Control && key == Key.D && CanEditLayers("duplicate")) return EditLayers("duplicate");
         if (mods == ModifierKeys.Control && key == Key.G && CanEditLayers("group")) return EditLayers("group");
         if (mods == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.G && CanEditLayers("ungroup")) return EditLayers("ungroup");

@@ -15,15 +15,20 @@ public sealed class FigureCanvas : FrameworkElement
     private Point? start;
     private Vector delta;
     private bool resizing;
+    private (string Oid, int Index, LayoutDivider Divider)? dividerDrag;
     private bool marquee;
     private string[] marqueeBase = [];
     private double? snapX, snapY;
+    private FigureGuide? previewGuide;
+    internal void PreviewGuide(FigureGuide? guide) { previewGuide = guide; InvalidateVisual(); }
     internal bool SnapEnabled { get; set; } = true;
     private const double HandleSize = 2.2;
     private static readonly Brush Accent = Brushes.DodgerBlue;
     private static readonly Pen SelectionPen = new(Accent, 0.45);
 
     internal event Action<CanvasEdit>? EditCompleted;
+    internal event Action<string, int, double>? DividerEdited;
+    internal event Action<FigureElement, PanelText>? PlotTextClicked;
     internal event Action? SelectionChanged;
     internal bool IsDragging => start.HasValue;
     internal IReadOnlyList<string> SelectedIds => selected;
@@ -66,9 +71,9 @@ public sealed class FigureCanvas : FrameworkElement
 
     internal static bool TopLevel(FigureElement e) => e.Parent is null;
     internal static bool Unlocked(FigureElement e) => e.Props is not { Locked: true } and not { Hidden: true };
-    internal static bool Movable(FigureElement e) => TopLevel(e) && Unlocked(e) && e.Host is null && HasBox(e) &&
-        e.Kind is "panel" or "image" or "text" or "line" or "bracket" or "rect" or "ellipse" or "figure" or "table" or "layout" or "qr" or "path" or "legend";
-    internal static bool Resizable(FigureElement e) => Movable(e) && e.Kind is "panel" or "image";
+    internal static bool Movable(FigureElement e) => TopLevel(e) && Unlocked(e) && HasBox(e) &&
+        e.Kind is "panel" or "image" or "inset" or "text" or "line" or "bracket" or "rect" or "ellipse" or "figure" or "table" or "layout" or "qr" or "path" or "legend";
+    internal static bool Resizable(FigureElement e) => Movable(e) && e.Kind is "panel" or "image" or "layout" or "inset";
     private static bool CanHit(FigureElement e) => TopLevel(e) && e.Props is not { Hidden: true } && HasBox(e);
     internal static bool HasBox(FigureElement e) => e.Box is { Length: 4 } b && b[2] >= 0 && b[3] >= 0;
     internal static Rect Box(FigureElement e) => new(e.Box![0], e.Box[1], e.Box[2], e.Box[3]);
@@ -87,20 +92,28 @@ public sealed class FigureCanvas : FrameworkElement
         dc.DrawRectangle(bg, null, page);
         foreach (var e in figure.Elements ?? [])
         {
-            bool moving = IsDragging && !marquee && !resizing && (selected.Contains(e.Oid) || e.Parent is { } id && selected.Contains(id));
+            bool moving = IsDragging && !marquee && !resizing && dividerDrag is null && (selected.Contains(e.Oid) || e.Parent is { } id && selected.Contains(id));
             Vector shift = moving ? delta : default;
             DrawSprite(dc, e.Sprite, shift);
         }
         foreach (var label in figure.Labels ?? [])
-            DrawSprite(dc, label.Sprite, IsDragging && !marquee && !resizing && label.Panel is { } id && selected.Contains(id) ? delta : default);
+            DrawSprite(dc, label.Sprite, IsDragging && !marquee && !resizing && dividerDrag is null && label.Panel is { } id && selected.Contains(id) ? delta : default);
         foreach (var active in Selections.Where(CanHit))
         {
             Rect selectionBox = DragBox(active);
             dc.DrawRectangle(null, SelectionPen, selectionBox);
             if (selected.Length == 1 && Resizable(active)) dc.DrawRectangle(Accent, null, Handle(selectionBox));
         }
+        if (Selection is { Kind: "layout", Dividers: { } dividers } layout && Unlocked(layout))
+            foreach (var (d, index) in dividers.Select((d, index) => (d, index)).Where(t => t.d.Editable))
+            {
+                double shift = dividerDrag?.Index == index ? (d.Axis == "col" ? delta.X : delta.Y) : 0;
+                double at = d.At + shift;
+                if (d.Axis == "col") dc.DrawLine(SelectionPen, new Point(at, d.From), new Point(at, d.To));
+                else dc.DrawLine(SelectionPen, new Point(d.From, at), new Point(d.To, at));
+            }
         var guidePen = new Pen(Brushes.Teal, 0.24) { DashStyle = DashStyles.Dash };
-        foreach (var guide in figure.Guides ?? [])
+        foreach (var guide in previewGuide is { } preview ? (figure.Guides ?? []).Append(preview) : figure.Guides ?? [])
         {
             if (guide.X is { } x) dc.DrawLine(guidePen, new Point(x, 0), new Point(x, Height));
             if (guide.Y is { } y) dc.DrawLine(guidePen, new Point(0, y), new Point(Width, y));
@@ -139,6 +152,15 @@ public sealed class FigureCanvas : FrameworkElement
         Focus();
         Point p = e.GetPosition(this);
         bool adding = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0;
+        if (!adding && e.ClickCount == 2 && PlotTextClicked is not null && HitPlotText(p)) { e.Handled = true; return; }
+        if (!adding && HitDivider(p) is { } divider && CaptureMouse())
+        {
+            dividerDrag = divider;
+            start = p;
+            delta = default;
+            e.Handled = true;
+            return;
+        }
         resizing = !adding && Selection is { } current && Resizable(current) && Handle(Box(current)).Contains(p);
         if (!resizing)
         {
@@ -169,6 +191,11 @@ public sealed class FigureCanvas : FrameworkElement
     {
         Point p = e.GetPosition(this);
         if (start is { } from) { UpdateDrag(from, p); InvalidateVisual(); }
+        if ((dividerDrag ?? HitDivider(p)) is { } divider)
+        {
+            Cursor = divider.Divider.Axis == "col" ? Cursors.SizeWE : Cursors.SizeNS;
+            return;
+        }
         Cursor = (IsDragging && resizing) || (Selection is { } active && Resizable(active) && Handle(Box(active)).Contains(p))
             ? Cursors.SizeNWSE : IsDragging || (figure?.Elements?.Any(el => Movable(el) && HitBox(el).Contains(p)) ?? false)
                 ? Cursors.SizeAll : Cursors.Arrow;
@@ -177,16 +204,22 @@ public sealed class FigureCanvas : FrameworkElement
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         CanvasEdit? edit = null;
+        var movedDivider = dividerDrag;
         if (start is { } from)
         {
             UpdateDrag(from, e.GetPosition(this));
-            if (!marquee && (Math.Abs(delta.X) >= 0.15 || Math.Abs(delta.Y) >= 0.15))
+            if (!marquee && movedDivider is null && (Math.Abs(delta.X) >= 0.15 || Math.Abs(delta.Y) >= 0.15))
                 edit = new(selected, resizing && Selection is { } active ? DragBox(active) : null, delta);
         }
         ResetDrag();
         ReleaseMouseCapture();
         InvalidateVisual();
         if (edit is not null) EditCompleted?.Invoke(edit);
+        if (movedDivider is { } divider)
+        {
+            double distance = divider.Divider.Axis == "col" ? delta.X : delta.Y;
+            if (Math.Abs(distance) >= 0.15) DividerEdited?.Invoke(divider.Oid, divider.Index, distance);
+        }
         e.Handled = true;
     }
 
@@ -200,6 +233,7 @@ public sealed class FigureCanvas : FrameworkElement
     {
         start = null;
         marquee = false;
+        dividerDrag = null;
         marqueeBase = [];
         snapX = snapY = null;
     }
@@ -216,7 +250,7 @@ public sealed class FigureCanvas : FrameworkElement
             SelectIds(marqueeBase.Concat(hits.SelectMany(CanvasGroup)));
             return;
         }
-        if (resizing || !SnapEnabled || delta.Length < 0.15 || Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) return;
+        if (dividerDrag is not null || !SnapEnabled || delta.Length < 0.15 || Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) return;
         var moving = Selections;
         if (moving.Length == 0) return;
         Rect union = Box(moving[0]);
@@ -227,8 +261,16 @@ public sealed class FigureCanvas : FrameworkElement
         var ys = targets.SelectMany(b => Axis(b.Top, b.Bottom)).Concat(Axis(0, Height)).Concat(guides.Select(g => g.Y).OfType<double>());
         double scale = PresentationSource.FromVisual(this) is null ? 1 : (PointToScreen(new Point(1, 0)) - PointToScreen(new Point())).Length;
         double tolerance = Math.Min(3, 6 / Math.Max(0.01, scale));
-        (double dx, snapX) = Snap(Axis(union.Left + delta.X, union.Right + delta.X), xs, tolerance);
-        (double dy, snapY) = Snap(Axis(union.Top + delta.Y, union.Bottom + delta.Y), ys, tolerance);
+        double[] movingX = resizing ? [Math.Max(union.Left + 1, union.Right + delta.X)] : Axis(union.Left + delta.X, union.Right + delta.X);
+        double[] movingY = resizing ? [Math.Max(union.Top + 1, union.Bottom + delta.Y)] : Axis(union.Top + delta.Y, union.Bottom + delta.Y);
+        if (resizing)
+        {
+            xs = xs.Where(x => x >= union.Left + 1);
+            ys = ys.Where(y => y >= union.Top + 1);
+        }
+        (double dx, snapX) = Snap(movingX, xs, tolerance);
+        (double dy, snapY) = Snap(movingY, ys, tolerance);
+        if (resizing) delta = new Vector(movingX[0] - union.Right, movingY[0] - union.Bottom);
         delta += new Vector(dx, dy);
     }
 
@@ -251,10 +293,41 @@ public sealed class FigureCanvas : FrameworkElement
         return (delta, target);
     }
 
+    private (string Oid, int Index, LayoutDivider Divider)? HitDivider(Point at)
+    {
+        if (Selection is not { Kind: "layout", Dividers: { } dividers } layout || !Unlocked(layout)) return null;
+        for (int i = 0; i < dividers.Length; i++)
+        {
+            var d = dividers[i];
+            double across = d.Axis == "col" ? at.X : at.Y, along = d.Axis == "col" ? at.Y : at.X;
+            if (d.Editable && Math.Abs(across - d.At) < 1 && along >= d.From && along <= d.To) return (layout.Oid, i, d);
+        }
+        return null;
+    }
+
+    private bool HitPlotText(Point at)
+    {
+        foreach (var layer in (figure?.Elements ?? []).Reverse())
+        {
+            if (!Unlocked(layer) || !HasBox(layer) || !HitBox(layer).Contains(at)) continue;
+            foreach (var text in layer.Texts ?? [])
+            {
+                if (text.Box is not [var x, var y, >= 0 and var w, >= 0 and var h]) continue;
+                var bounds = new Rect(x, y, w, h);
+                bounds.Inflate(0.5, 0.5);
+                if (!bounds.Contains(at)) continue;
+                PlotTextClicked?.Invoke(layer, text);
+                return true;
+            }
+            if (layer.Kind is not "layout" and not "legend") return false;
+        }
+        return false;
+    }
+
     private Rect DragBox(FigureElement active)
     {
         Rect b = Box(active);
-        if (!IsDragging || marquee) return b;
+        if (!IsDragging || marquee || dividerDrag is not null) return b;
         if (!resizing) { b.Offset(delta); return b; }
         return new Rect(b.Location, new Size(Math.Max(1, b.Width + delta.X), Math.Max(1, b.Height + delta.Y)));
     }

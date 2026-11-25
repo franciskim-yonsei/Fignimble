@@ -29,6 +29,8 @@ public partial class MainWindow : Window
             await Reload();
         };
         Page.EditCompleted += async edit => await CanvasEdited(edit);
+        Page.DividerEdited += async (oid, index, delta) => await MoveDivider(oid, index, delta);
+        Page.PlotTextClicked += async (layer, text) => await EditClickedPlotText(layer, text);
         Page.SelectionChanged += CanvasSelectionChanged;
         UpdateControls();
         SyncGeometry();
@@ -39,22 +41,29 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         reloadTimer.Stop();
+        terminal?.Dispose();
         engine?.Dispose();
         base.OnClosed(e);
     }
 
-    private EngineClient GetEngine()
+    private EngineClient GetEngine(string? targetProject = null)
     {
-        if (engine is { Running: true }) return engine;
+        string python = EngineClient.ResolvePython(targetProject ?? project);
+        if (engine is { Running: true } && string.Equals(engine.Python, python, StringComparison.OrdinalIgnoreCase)) return engine;
         engine?.Dispose();
         engine = null;
-        engine = new EngineClient();
-        engine.Notification += kind =>
+        var client = new EngineClient(python);
+        client.Notification += kind =>
         {
             if (kind != "changed") return;
-            Dispatcher.BeginInvoke(() => { reloadTimer.Stop(); reloadTimer.Start(); });
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (engine != client) return;
+                reloadTimer.Stop();
+                reloadTimer.Start();
+            });
         };
-        return engine;
+        return engine = client;
     }
 
     private async Task During(string status, Func<Task> action)
@@ -65,7 +74,12 @@ public partial class MainWindow : Window
         Status.Text = status;
         try { await action(); }
         catch (Exception ex) { Status.Text = ex.Message; }
-        finally { busy = false; UpdateControls(); }
+        finally
+        {
+            busy = false;
+            if (reloadTimer.IsEnabled) { reloadTimer.Stop(); reloadTimer.Start(); }
+            UpdateControls();
+        }
     }
 
     private void UpdateControls()
@@ -82,6 +96,7 @@ public partial class MainWindow : Window
         ExportButton.IsEnabled = !busy && validFigure;
         Page.IsEnabled = !busy && validFigure;
         MoreButton.IsEnabled = !busy && project is not null;
+        TerminalButton.IsEnabled = !busy && project is not null;
         EditSourceButton.IsEnabled = !busy && currentRender is not null;
     }
 
@@ -104,13 +119,16 @@ public partial class MainWindow : Window
     {
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException($"Project folder not found: {folder}");
         reloadTimer.Stop();
+        terminal?.Stop();
+        terminalFolder = null;
         state = null;
         project = null;
         Figures.ItemsSource = null;
         ClearFigure();
         Title = "Fignimble for Windows";
-        await GetEngine().CallAsync<JsonElement>("open", new { project = folder });
+        await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
         project = folder;
+        if (TerminalDrawer.Visibility == Visibility.Visible) StartShell();
         Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
         await RefreshProject(first);
     }
@@ -159,6 +177,7 @@ public partial class MainWindow : Window
         Page.ShowFigure(null, false);
         RefreshLayers();
         PageView.Visibility = Visibility.Collapsed;
+        ScheduleRulers();
         EmptyCanvas.Visibility = Visibility.Visible;
         EmptyCanvas.Text = project is null ? "Open a folder containing a Fignimble figure (.py)." : "No figure selected.";
         SourceTitle.Text = "Figure source";
@@ -179,6 +198,7 @@ public partial class MainWindow : Window
         RefreshLayers();
         UpdateZoom();
         PageView.Visibility = validFigure ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleRulers();
         EmptyCanvas.Visibility = validFigure ? Visibility.Collapsed : Visibility.Visible;
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
         double scroll = preserve ? SourceText.VerticalOffset : 0;
@@ -196,7 +216,9 @@ public partial class MainWindow : Window
     {
         if (!validFigure || shownFigure is not { } name) return Task.CompletedTask;
         object args = edit.NewBox is { } box
-            ? new { figure = name, op = "resize", oid = edit.Oids[0], box = new[] { box.X, box.Y, box.Width, box.Height } }
+            ? currentRender?.Elements?.FirstOrDefault(e => e.Oid == edit.Oids[0])?.Kind == "layout"
+                ? new { figure = name, op = "set", oid = edit.Oids[0], props = new { x = box.X, y = box.Y, w = box.Width, h = box.Height } }
+                : new { figure = name, op = "resize", oid = edit.Oids[0], box = new[] { box.X, box.Y, box.Width, box.Height } }
             : new { figure = name, op = "move", oids = edit.Oids, dx = edit.Delta.X, dy = edit.Delta.Y };
         return EditFigure(name, args, "Updating figure…");
     }
