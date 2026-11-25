@@ -24,9 +24,7 @@ MIRROR_TYPES = {".py", ".csv", ".tsv", ".txt", ".md", ".json", ".toml", ".yaml",
                 ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".bmp", ".webp", ".svg", ".pdf", ".eps"}
 
 
-def _skip_dirs():
-    from .render import SKIP_DIRS               # here, so the tunnel on the Mac starts without matplotlib
-    return SKIP_DIRS
+SKIP_DIRS = {".fignimble", ".git", "__pycache__", ".venv", "venv", "node_modules", ".ipynb_checkpoints"}
 
 
 def enabled() -> bool:
@@ -41,18 +39,16 @@ def _stat(p: Path) -> list[int]:
 def mirrored(rel: str) -> bool:
     """Whether a project file (a relative path with /) belongs in the Mac's mirror."""
     parts = rel.split("/")
-    skip = _skip_dirs()
     return (os.path.splitext(parts[-1])[1].lower() in MIRROR_TYPES and not parts[-1].startswith(".")
-            and not any(d in skip or d.startswith(".") for d in parts[:-1])
+            and not any(d in SKIP_DIRS or d.startswith(".") for d in parts[:-1])
             and not (len(parts) == 1 and parts[0] in templates.AGENT_FILES))
 
 
 def scan(project: Path) -> dict:
     """{relative path: [mtime_ns, size]} of the files the mirror keeps (on either side)."""
     out = {}
-    skip = _skip_dirs()
     for dirpath, dirs, files in os.walk(project):
-        dirs[:] = [d for d in dirs if d not in skip and not d.startswith(".")]
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
         for f in files:
             p = Path(dirpath) / f
             rel = p.relative_to(project).as_posix()

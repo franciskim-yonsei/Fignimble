@@ -38,6 +38,7 @@ from matplotlib.figure import Figure as MplFigure  # noqa: E402
 
 import matplotlib.lines  # noqa: E402
 from . import api, journals, layout, qr, tables  # noqa: E402
+from .mirror import SKIP_DIRS  # noqa: E402
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 sys.dont_write_bytecode = True          # running a project's code leaves no __pycache__ in it
@@ -47,7 +48,6 @@ MM = 72 / 25.4                     # points per millimeter
 RASTER = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp")
 CROP_SLUG = 10.0                   # mm outside the bleed for crop marks
 VECTOR = (".pdf", ".svg")
-SKIP_DIRS = {".fignimble", ".git", "__pycache__", ".venv", "venv", "node_modules", ".ipynb_checkpoints"}
 
 
 CACHE_VERSION = 9                  # bump when a change to drawing makes cached pieces wrong
@@ -2544,6 +2544,21 @@ def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props) -> list[
 
 
 def _gs():
+    override = os.environ.get("FIGNIMBLE_GHOSTSCRIPT")
+    if override:
+        return shutil.which(override)
+    if os.name == "nt":
+        names = ("gswin64c.exe", "gswin32c.exe", "gs.exe")
+        for name in names:
+            if found := shutil.which(name):
+                return found
+        for variable in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+            if parent := os.environ.get(variable):
+                candidates = sorted((Path(parent) / "gs").glob("gs*/bin/gswin*c.exe"),
+                                    key=lambda p: tuple(int(n) for n in re.findall(r"\d+", p.parents[1].name)), reverse=True)
+                if candidates:
+                    return str(candidates[0])
+        return None
     return shutil.which("gs") or next((p for p in ("/opt/homebrew/bin/gs", "/usr/local/bin/gs") if Path(p).exists()), None)
 
 
@@ -2552,7 +2567,9 @@ def _ghostscript(src: str, dest: str, fmt: str, cmyk: bool, outline: bool, dpi: 
     and pictures keep their pixels (no downsampling)."""
     gs = _gs()
     if gs is None:
-        raise RuntimeError("EPS, CMYK PDF and outlined text need Ghostscript: brew install ghostscript")
+        hint = ("install Ghostscript for Windows or set FIGNIMBLE_GHOSTSCRIPT to gswin64c.exe" if os.name == "nt"
+                else "install Ghostscript (on macOS: brew install ghostscript)")
+        raise RuntimeError(f"EPS, CMYK PDF and outlined PDF/EPS text need Ghostscript: {hint}")
     args = [gs, "-dNOPAUSE", "-dBATCH", "-dSAFER", "-dQUIET", f"-r{int(dpi)}",
             "-dDownsampleColorImages=false", "-dDownsampleGrayImages=false", "-dDownsampleMonoImages=false",
             "-sDEVICE=" + ("eps2write" if fmt == "eps" else "pdfwrite"), f"-sOutputFile={dest}"]

@@ -34,10 +34,11 @@ import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 from concurrent.futures import Future
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import mirror, remote
 
@@ -90,7 +91,10 @@ def ssh_args(host: str, script: str) -> list[str]:
 def _map(v, a: str, b: str):
     """`v` with paths under folder `a` moved under folder `b` (in strings, lists, dict keys and values)."""
     if isinstance(v, str):
-        return b + v[len(a):] if v == a or v.startswith(a + "/") else v
+        native = os.name == "nt" and bool(PureWindowsPath(a).drive)
+        value = v.replace("\\", "/") if native else v
+        key, prefix = (value.lower(), a.lower()) if native else (value, a)
+        return b + value[len(a):] if key == prefix or key.startswith(prefix + "/") else v
     if isinstance(v, dict):
         return {_map(k, a, b): _map(x, a, b) for k, x in v.items()}
     if isinstance(v, list):
@@ -98,11 +102,32 @@ def _map(v, a: str, b: str):
     return v
 
 
+def _mirror_path(root: str, rel: str) -> Path:
+    """Only POSIX relative names that are safe on the client filesystem can be mirrored."""
+    parts = rel.split("/")
+    if any(not p or p in (".", "..") or "\\" in p or ":" in p or "\x00" in p for p in parts):
+        raise TunnelError(f"unsafe mirror path: {rel!r}")
+    if os.name == "nt" and any(os.path.isreserved(p) if hasattr(os.path, "isreserved") else
+                               PureWindowsPath(p).is_reserved() or p.endswith((".", " ")) or
+                               any(c in '<>"|?*' or ord(c) < 32 for c in p) for p in parts):
+        raise TunnelError(f"the server path {rel!r} cannot be represented on Windows")
+    base = Path(root).resolve()
+    out = base.joinpath(*parts)
+    if not out.resolve().is_relative_to(base):
+        raise TunnelError(f"mirror path leaves the local project: {rel!r}")
+    return out
+
+
 def _write_atomic(p: Path, data: bytes):
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.tunnel-tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, p)
+    with tempfile.NamedTemporaryFile(prefix=f".{p.name}.", suffix=".tunnel-tmp", dir=p.parent, delete=False) as file:
+        tmp = Path(file.name)
+        try:
+            file.write(data)
+            file.close()
+            os.replace(tmp, p)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 class Tunnel:
@@ -110,7 +135,7 @@ class Tunnel:
         remote._check_host(host)
         self.host, self.path, self.python = host, path, python or "python3"
         local.mkdir(parents=True, exist_ok=True)
-        self.L = str(local.resolve())
+        self.L = local.resolve().as_posix()
         self.R: str | None = None                 # the project's folder on the server, once open
         self.open = False
         self.state_file = Path(self.L + ".sync.json")
@@ -162,8 +187,11 @@ class Tunnel:
         version = engine_version()
         for attempt in (1, 2):
             log(f"starting the engine on {self.host} with {self.python}")
-            p = subprocess.Popen(ssh_args(self.host, self.launch_script(version)), stdin=subprocess.PIPE,
-                                 stdout=subprocess.PIPE, stderr=sys.stderr, bufsize=0)
+            try:
+                p = subprocess.Popen(ssh_args(self.host, self.launch_script(version)), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=sys.stderr, bufsize=0)
+            except FileNotFoundError as exc:
+                raise TunnelError("OpenSSH client was not found; install it or configure FIGNIMBLE_SSH") from exc
             first = p.stdout.readline()
             if READY.encode() in first:
                 self.proc = p
@@ -189,7 +217,7 @@ class Tunnel:
                                   f"{' '.join(pip)}), or choose the Python of an environment that has the engine's "
                                   "packages (matplotlib, pymupdf and pillow).")
             if code == 255:
-                raise TunnelError(f"ssh couldn't connect to {self.host}; its message is above.")
+                raise TunnelError(f"SSH couldn’t connect to {self.host}. Try the connection in your terminal and use an SSH key or agent.")
             raise TunnelError(f"the engine on {self.host} didn't start (exit status {code}); its messages are above")
         raise TunnelError("the engine didn't start")
 
@@ -262,8 +290,8 @@ class Tunnel:
         for path, data in files.items():
             if self.R and path.startswith(self.R + "/"):
                 try:
-                    _write_atomic(Path(self.L + path[len(self.R):]), base64.b64decode(data))
-                except OSError as exc:
+                    _write_atomic(_mirror_path(self.L, path[len(self.R) + 1:]), base64.b64decode(data))
+                except (OSError, TunnelError) as exc:
                     log("couldn't write", path, exc)
 
     def deliver(self):
@@ -330,7 +358,7 @@ class Tunnel:
             for rel, f in got.items():
                 if f is None:
                     continue
-                _write_atomic(Path(self.L) / rel, base64.b64decode(f["data"]))
+                _write_atomic(_mirror_path(self.L, rel), base64.b64decode(f["data"]))
                 self.state[rel] = {"r": f["stat"], "l": self._lstat(rel)}
                 done.add(rel)
         for rel in rels:
@@ -384,6 +412,14 @@ class Tunnel:
                 return
             self.push()
             there = self.call("manifest")["files"]
+            if os.name == "nt":
+                folded = set()
+                for rel in there:
+                    _mirror_path(self.L, rel)
+                    key = rel.casefold()
+                    if key in folded:
+                        raise TunnelError(f"the remote project contains case-colliding paths: {rel!r}")
+                    folded.add(key)
             self.remote_size = {rel: s[1] for rel, s in there.items()}
             need = [rel for rel, rs in there.items() if (self.state.get(rel) or {}).get("r") != rs]
             changed = bool(need)
@@ -408,7 +444,11 @@ class Tunnel:
     # --- requests from the app ---
 
     def local_path(self, p) -> bool:
-        return isinstance(p, str) and os.path.isabs(p) and not (p == self.L or p.startswith(self.L + "/"))
+        if not isinstance(p, str) or not os.path.isabs(p):
+            return False
+        if self.R and (p == self.R or p.startswith(self.R + "/")):
+            return False
+        return not Path(p).resolve().is_relative_to(Path(self.L).resolve())
 
     def upload(self, path: str) -> str:
         data = base64.b64encode(Path(path).read_bytes()).decode()
@@ -454,6 +494,7 @@ class Tunnel:
                         return
                     host, path = where
                 try:
+                    remote._check_host(host)
                     data = remote._run(remote.ssh_command() + [host, "--", f"cat -- {remote._quote(path)}"],
                                        timeout=120)
                 except remote.RemoteError as exc:

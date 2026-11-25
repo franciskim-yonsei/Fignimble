@@ -267,6 +267,32 @@ def test_edit_implicit_journal_style_keeps_preset(tmp_path):
         s.close()
 
 
+def test_print_pdf_retains_trim_box_with_outlined_cmyk(tmp_path):
+    import os
+    import re
+    import pymupdf
+    from fignimble.render import Renderer, _gs
+
+    if not _gs():
+        pytest.skip("requires Ghostscript")
+    path = tmp_path / "fig1.py"
+    path.write_text('from fignimble import Figure\nfig = Figure(80, 50)\n'
+                    'fig.text("Print test", x=8, y=8, color="#0000ff")\n', encoding="utf-8")
+    output = tmp_path / "print test.pdf"
+    cwd = Path.cwd()
+    try:
+        Renderer(str(tmp_path)).export(str(path), str(output), "pdf", dpi=300, cmyk=True, outline=True, bleed=3, marks=True)
+    finally:
+        os.chdir(cwd)
+    with pymupdf.open(output) as pdf:
+        page = pdf[0]
+        assert page.trimbox.width * 25.4 / 72 == pytest.approx(80, abs=0.02)
+        assert page.trimbox.height * 25.4 / 72 == pytest.approx(50, abs=0.02)
+        assert page.mediabox.width > page.trimbox.width
+        assert not page.get_fonts()
+        assert re.search(rb"\s[kK]\s", page.read_contents())  # DeviceCMYK fill or stroke instruction
+
+
 def test_figure_journal_drives_default_export(tmp_path):
     from PIL import Image
 

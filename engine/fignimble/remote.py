@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new"]
@@ -22,7 +23,15 @@ class RemoteError(Exception):
 
 
 def _ssh():
-    return shlex.split(os.environ.get("FIGNIMBLE_SSH", "ssh"))
+    if supplied := os.environ.get("FIGNIMBLE_SSH"):
+        if Path(supplied).is_file():
+            return [supplied]
+        return shlex.split(supplied)
+    if sys.platform == "win32":
+        native = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+        if native.is_file():
+            return [str(native)]
+    return ["ssh"]
 
 
 def ssh_command() -> list[str]:
@@ -87,7 +96,7 @@ def _quote(path: str) -> str:
 
 
 def _check_host(host: str):
-    if not host or host.startswith("-") or any(c.isspace() for c in host):
+    if not host or host.startswith("-") or any(c.isspace() or ord(c) < 32 for c in host):
         raise RemoteError(f"{host!r} isn't a host name")
 
 
