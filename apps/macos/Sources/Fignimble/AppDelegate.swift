@@ -138,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         item("Quit Fignimble", #selector(NSApplication.terminate(_:)), "q", to: NSApp)])
         menu("File", [item("New Project…", #selector(MainController.newProject(_:)), "n", [.command, .shift]),
                       item("New Figure…", #selector(MainController.newFigure(_:)), "n"),
+                      item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
                       item("Open Project…", #selector(MainController.openProject(_:)), "o"),
                       item("Open Project on SSH Server…", #selector(MainController.openRemoteProject(_:)), "o", [.command, .shift]),
                       recentMenu(), sep(),
@@ -163,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         item("Figure…", #selector(MainController.insertFigure(_:))),
                         item("QR Code…", #selector(MainController.insertQR(_:))),
                         item("BioCartoon Icons…", #selector(MainController.showBioCartoon(_:)), "b", [.command, .shift]),
-                        item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
+                        item("Table…", #selector(MainController.insertGridTable(_:))),
                         item("Table from CSV…", #selector(MainController.insertTable(_:))),
                         item("Panel from SSH Server…", #selector(MainController.insertRemotePanel(_:))),
                         item("Scale Bar on Picture…", #selector(MainController.addScaleBar(_:))),

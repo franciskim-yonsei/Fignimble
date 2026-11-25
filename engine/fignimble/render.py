@@ -66,8 +66,42 @@ def rgb(c):
 
 
 def is_figure_source(text: str) -> bool:
-    """A .py file that makes a figure (and is not a panel or a style module)."""
-    return "fignimble" in text and "Figure(" in text
+    """A .py file that makes a figure or a table (and is not a panel or a style module)."""
+    return "fignimble" in text and ("Figure(" in text or is_table_source(text))
+
+
+def is_table_source(text: str) -> bool:
+    """A .py file that makes a Table (`tab = Table(...)`)."""
+    return "fignimble" in text and re.search(r"(?m)^\w+\s*=\s*(fignimble\.)?Table\(", text) is not None
+
+
+def table_rows(p: dict, project: Path) -> list:
+    """The cells of a table element: its rows=, the rows its function returns (a DataFrame becomes its column names
+    and values), or its file."""
+    if p.get("rows") is not None:
+        return p["rows"]
+    src = p["source"]
+    if callable(src):
+        got = src()
+        if hasattr(got, "columns") and hasattr(got, "values"):           # a pandas DataFrame
+            index = getattr(got, "index", None)
+            named = index is not None and any(n is not None for n in getattr(index, "names", []) or [])
+            if named:
+                got = got.reset_index()
+            return [[str(c) for c in got.columns]] + [[_cell_value(v) for v in r] for r in got.values.tolist()]
+        rows = [list(r) for r in got]
+        if not rows:
+            raise ValueError(f"{getattr(src, '__name__', 'the function')} returned no rows")
+        return rows
+    return tables.read_rows(project / src)
+
+
+def _cell_value(v):
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    if hasattr(v, "item"):                                   # numpy scalars
+        v = v.item()
+    return v
 
 
 def run_isolated(path: Path) -> api.Figure:
@@ -744,6 +778,9 @@ class Renderer:
             rasters[id(obj)] = pc.meta
             return pc
 
+        table_page = isinstance(fig, api.Table)
+        if table_page:
+            self._table_widths(fig, family)
         for i, e in enumerate(fig.elements):
             oid = str(i)
             p = e.props
@@ -825,9 +862,14 @@ class Renderer:
                 elif e.kind == "table":
                     size = p["size"] or style.size
                     fam = [p["font"]] + family if p["font"] else family
-                    if p.get("rows") is None:
+                    if p.get("rows") is None and callable(p["source"]):
+                        fn = inspect.unwrap(p["source"])               # through @cached
+                        info["code"] = {"file": inspect.getsourcefile(fn), "line": fn.__code__.co_firstlineno}
+                        info["props"]["source"] = None
+                        info["fromCode"] = getattr(fn, "__name__", "a function")
+                    elif p.get("rows") is None:
                         self.used.add(self.resolve(p["source"]))
-                    rows = p["rows"] if p.get("rows") is not None else tables.read_rows(self.resolve(p["source"]))
+                    rows = table_rows(p, self.project)
                     pdf, w, h = self.table_piece(rows, p["header"], size, fam, p["color"], p.get("w"),
                                                  p.get("decimals"), p.get("align"), p.get("grid", False))
                     box = (p["x"], p["y"], w, h)
@@ -959,9 +1001,25 @@ class Renderer:
                 page.show_pdf_page(pymupdf.Rect(ox, oy, ox + w * MM, oy + h * MM), self._doc(pdf), 0,
                                    keep_proportion=False, rotate=-rot)
             pieces.append(Piece(oid, "panel", box, _h("p", pdf, rot), draw, meta={"pdf": pdf, "scale": 1.0}))
+        if table_page:
+            _stack_table(fig, pieces, infos)
         label_pieces, label_infos = self._labels(fig, panels, family)
         # labels are drawn above everything
         return pieces + label_pieces, infos, label_infos
+
+    def _table_widths(self, fig, family):
+        """A Table's title and notes wrap to the width of its cells (at least 60 mm)."""
+        cells = fig.cells.props
+        try:
+            fam = [cells["font"]] + family if cells["font"] else family
+            _, w, _ = self.table_piece(table_rows(cells, self.project), cells["header"],
+                                       cells["size"] or fig.style.size, fam, cells["color"], cells.get("w"),
+                                       cells.get("decimals"), cells.get("align"), cells.get("grid", False))
+        except Exception:                                  # noqa: BLE001  (the table's own step reports it)
+            w = 60.0
+        for e in fig.elements:
+            if e.props.get("role") in ("title", "notes"):
+                e.props["width"] = round(max(w, 60.0), 2)
 
     def _plan_layout(self, i, e, rc, deps, steps, infos, panels, boxes, oids, code_info, panel_job, style,
                      dests=None, rasters=None):
@@ -1279,7 +1337,7 @@ class Renderer:
                 warn.append({"level": "error", "oid": info["oid"], "message": f"{who(info['oid'])} failed: {last}"})
         for pc in pieces:
             m = pc.meta
-            if pc.kind in ("text", "label", "bracket") and m.get("size", 99) < min_font - 1e-6:
+            if pc.kind in ("text", "label", "bracket", "table") and m.get("size", 99) < min_font - 1e-6:
                 warn.append({"level": "warning", "oid": pc.oid,
                              "message": f"{who(pc.oid)}: {m['size']:g} pt text is below the {min_font:g} pt minimum"})
             for w_ in m.get("nested") or []:            # from inside a figure placed whole
@@ -1354,6 +1412,16 @@ class Renderer:
             if l["text"] in seen:
                 warn.append({"level": "warning", "oid": l["oid"], "message": f"two panels are labeled {l['text']}"})
             seen[l["text"]] = 1
+        for info in infos:
+            if info["kind"] == "table" and info["props"].get("cells") and not info.get("hidden"):
+                warn += [{**w_, "oid": info["oid"]} for w_ in tables.check(info["props"]["cells"],
+                                                                           info["props"].get("header", True),
+                                                                           info["props"].get("decimals"))]
+        if isinstance(fig, api.Table):
+            if not any(i["props"].get("role") == "title" for i in infos):
+                warn.append({"level": "info", "oid": None,
+                             "message": "the table has no title; journals ask for one (Table(..., title=...))"})
+            return warn
         j = _journal_info(fig)
         if j and not j["fits"]:
             warn.append({"level": "info", "oid": None,
@@ -1825,6 +1893,27 @@ def _journal_info(fig):
     info = journals.JOURNALS[j]
     fits = any(abs(fig.width - w) < 0.6 for w in info["widths"].values())
     return {"key": j, "name": info["name"], "widths": info["widths"], "fits": fits}
+
+
+def _stack_table(fig, pieces, infos):
+    """A Table's page: its title, cells and notes one under the other, `pad` mm around them, the page their size."""
+    pad = float(fig.props.get("pad", 3))
+    by_oid = {pc.oid: pc for pc in pieces}
+    y, right, last_gap = pad, pad, 0.0
+    for info in infos:
+        role = info["props"].get("role")
+        if role is None or info.get("hidden"):
+            continue
+        w, h = info["box"][2], info["box"][3]
+        info["box"] = [round(pad, 4), round(y, 4), w, h]
+        pc = by_oid.get(info["oid"])
+        if pc is not None:
+            pc.box = (pad, y, pc.box[2], pc.box[3])
+        right = max(right, pad + w)
+        last_gap = 1.5 if role == "title" else 1.2
+        y += h + last_gap
+    fig.props["width"] = round(right + pad, 2)
+    fig.props["height"] = round(y - last_gap + pad, 2)
 
 
 def _jsonable(v):

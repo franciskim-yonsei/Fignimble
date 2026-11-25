@@ -11,11 +11,13 @@ other apps.
 | `fignimble snapshot fig1.py [--dpi 150] [--dark]` | renders to `.fignimble/snapshots/fig1.png` and prints the path |
 | `fignimble info fig1.py [--json]` | every element's box in mm, the panel letters, panels' Python warnings and preflight warnings |
 | `fignimble check [fig1.py ...]` | preflight warnings of every figure; exit status 1 if there are any |
-| `fignimble export fig1.py fig1.pdf [--dpi 600]` | PDF, SVG, EPS, PNG, TIFF, JPEG or PowerPoint (.pptx), from the file's extension |
-| `fignimble table fig1.py 3 table1.docx` | a table of the figure (its element number or name) as a Word file |
+| `fignimble export fig1.py fig1.pdf [--dpi 600]` | PDF, SVG, EPS, PNG, TIFF, JPEG or PowerPoint (.pptx), from the file's extension; a table also as Word (.docx), Excel (.xlsx), CSV or TSV |
+| `fignimble table table1.py table1.docx` | a table (a `Table` file, or the only table of a figure) as a Word, Excel, CSV or TSV file, with its title and notes |
+| `fignimble table fig1.py 3 table1.docx` | a table of a figure that has several (its element number or name) |
 | `fignimble table data.csv table1.docx` | a CSV or TSV file as a Word table |
 | `fignimble provenance fig1.pdf` | what an exported file was made from, and whether the project's files still match (exit status 1 if not) |
 | `fignimble journals` | the journal presets and their column widths, and the poster sizes |
+| `fignimble install-skills [--agent codex] [--project DIR] [--dest DIR]` | installs the [agent skills](../ai/agents.md#agent-skills) for Claude Code (`~/.claude/skills`), Codex, or another agent; `--list` shows them, `--uninstall` removes them |
 
 Options of `export`:
 

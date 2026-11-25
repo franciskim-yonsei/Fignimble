@@ -520,7 +520,18 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     func refreshState() async {
         guard project != nil, let s = try? await engine.json("state") else { return }
         state = s
+        let before = figures.firstIndex { $0["name"] as? String == current }
         figures = s["figures"] as? [[String: Any]] ?? []
+        // the figure on screen is gone (deleted, cut, a New Figure undone): the one next to it in the list instead
+        if let c = current, !figures.contains(where: { $0["name"] as? String == c }) {
+            current = nil; figure = nil; canvas.selection = []
+            if let n = (figures.isEmpty ? nil : figures[min(before ?? 0, figures.count - 1)])?["name"] as? String {
+                enqueue { [self] in await load(n) }
+            } else {
+                canvas.setFigure(nil); navigator.setLayers(nil, selection: []); inspector.update(); code.clear()
+                status.stringValue = "No figures yet: File ▸ New Figure (⌘N)."
+            }
+        }
         history.set(done: s["history"] as? [String] ?? [], undone: s["future"] as? [String] ?? [])
         navigator.setFigures(figures, current: current)
         var files: [String] = []
@@ -566,7 +577,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         canvas.setFigure(f)
         navigator.setLayers(f, selection: canvas.selection)
         problems.set(f.warnings)
-        captionPane.set(f.caption, figure: f.name)
+        captionPane.set(f.caption, figure: f.name, table: f.isTable)
         drawer.rebuildStrip()
         inspector.update()
         hRuler.needsDisplay = true; vRuler.needsDisplay = true
@@ -1631,8 +1642,9 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         case #selector(toggleSidebar(_:)): item.title = navigator.isHidden ? "Show Figures and Layers" : "Hide Figures and Layers"
         case #selector(toggleInspector(_:)): item.title = rightHost.isHidden ? "Show Inspector" : "Hide Inspector"
         case #selector(labelsNone(_:)): item.state = figure?.labelStyle["numbering"] as? String == "none" ? .on : .off; return figure != nil
-        case #selector(exportTable(_:)): return (sel.count == 1 && figure?.element(sel[0])?.kind == "table") || figure?.isTableFigure == true
-        case #selector(insertTable(_:)), #selector(insertRemotePanel(_:)): return figure != nil
+        case #selector(exportTable(_:)): return (sel.count == 1 && figure?.element(sel[0])?.kind == "table") || figure?.tableCells != nil
+        case #selector(insertTable(_:)): return figure != nil && figure?.isTable == false
+        case #selector(insertRemotePanel(_:)): return figure != nil
         case #selector(newTable(_:)): return project != nil
         case #selector(toggleLabelAlign(_:)): item.state = (figure?.labelStyle["align"] as? Bool ?? true) ? .on : .off; return figure != nil
         case #selector(toggleLabelOrder(_:)): item.state = (figure?.labelStyle["order"] as? String) == "source" ? .on : .off; return figure != nil
@@ -1669,6 +1681,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
              #selector(labelsOutside(_:)), #selector(labelsInside(_:)), #selector(labelJournal(_:)), #selector(refreshFigure(_:)),
              #selector(showBioCartoon(_:)), #selector(copyFigure(_:)):
             return figure != nil
+        case #selector(insertGridTable(_:)): return figure != nil && figure?.isTable == false
         case #selector(newFigure(_:)), #selector(exportAll(_:)), #selector(revealProject(_:)), #selector(showTerminal(_:)), #selector(newTerminal(_:)):
             return project != nil
         case #selector(saveCode(_:)): return code.dirty

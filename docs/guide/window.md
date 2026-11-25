@@ -3,7 +3,10 @@
 <img class="fg-shot" src="../../assets/editor.jpg" alt="The Fignimble window with a panel selected">
 
 - **Figures** (top left): a thumbnail of each figure file in the project, with its count of preflight warnings.
-  Click one to open it; **+** makes a new one (**File ▸ New Figure…**, <kbd>⌘</kbd><kbd>N</kbd>).
+  Click one to open it; **+** makes a new one (**File ▸ New Figure…**, <kbd>⌘</kbd><kbd>N</kbd>). Right-click a figure
+  or table for **Cut**, **Copy**, **Paste**, **Delete**, **New Figure…** and **New Table…**: a pasted copy is a new
+  file, `<name>_copy.py` (a table's CSV is copied with it), pasted into this project or another one, and **Edit ▸ Undo**
+  brings back a deleted or cut one.
 - **Layers** (bottom left): every element of the figure, top to bottom, with its panel letter. The eye hides an
   element and the lock stops the pointer from catching it (**Object ▸ Lock**, <kbd>⌘</kbd><kbd>2</kbd>;
   **Hide**, <kbd>⌘</kbd><kbd>3</kbd>).

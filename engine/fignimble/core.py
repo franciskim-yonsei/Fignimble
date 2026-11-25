@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from . import remote, srcedit, tables, templates
-from .render import SKIP_DIRS, is_figure_source
+from .render import SKIP_DIRS, is_figure_source, is_table_source
 from .srcedit import REMOVE, EditError, Raw, Source
 
 ENGINE_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -35,6 +35,12 @@ METHOD_KIND = {"panel": "panel", "image": "image", "text": "text", "line": "line
                "figure": "figure", "qr": "qr", "table": "table"}
 BOXED = ("panel", "image", "rect", "ellipse", "layout")
 TABLE_FILES = (".csv", ".tsv")
+# what can be done to a Table's page (its title, cells and notes lay themselves out)
+TABLE_OPS = {"set", "move", "resize", "delete", "table_rows", "fit_figure", "style", "paste_style", "labels"}
+# a Table's parts: which of the Table(...) call's arguments each one's settings are
+TABLE_ARGS = {"title": {"text": "title"}, "notes": {"text": "notes"},
+              "cells": {k: k for k in ("rows", "w", "header", "decimals", "align", "grid", "size", "font", "color",
+                                       "title", "notes")}}
 INSET_KEYS = {"x", "y", "w", "h", "label", "group", "name"}
 
 
@@ -236,10 +242,11 @@ class Session:
         out = []
         for p in sorted(self.project.glob("*.py"), key=lambda p: _natural(p.stem)):
             try:
-                if is_figure_source(p.read_text(encoding="utf-8", errors="replace")):
-                    out.append({"name": p.stem, "file": str(p)})
+                text = p.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                pass
+                continue
+            if is_figure_source(text):
+                out.append({"name": p.stem, "file": str(p), "kind": "table" if is_table_source(text) else "figure"})
         return out
 
     def figure_file(self, name: str) -> str:
@@ -463,6 +470,9 @@ class Session:
             plan = Plan()
             op = a["op"]
             try:
+                if _is_table(data) and op not in TABLE_OPS:
+                    raise EditError("a table's file holds its title, cells and notes, laid out for you; to draw on "
+                                    "a table or put it with other things, place it in a figure (Insert ▸ Figure…)")
                 label = getattr(self, f"_op_{op}")(plan, data, a)
                 texts = plan.texts()
             except (EditError, KeyError, ValueError) as exc:
@@ -527,12 +537,19 @@ class Session:
         if call is None:
             raise EditError(f"can't find the code of {self._who(data, info)} ({Path(site['file']).name} line "
                             f"{site['line']}); was the file changed? Try again")
-        if sum(1 for e in data["elements"] if e.get("site") == site and e["method"] == info["method"]) > 1:
+        if info["method"] != "Table" and \
+                sum(1 for e in data["elements"] if e.get("site") == site and e["method"] == info["method"]) > 1:
             raise EditError(f"{self._who(data, info)} is made by a loop ({Path(site['file']).name} line {site['line']}), "
                             "together with others; change it in the code")
         return src, call
 
     def _set(self, plan: Plan, data: dict, info: dict, updates: dict):
+        if info.get("method") == "Table":                  # a part of a Table: its own argument of the Table(...)
+            names = TABLE_ARGS.get(info["props"].get("role"), {})
+            updates = {names[k]: (REMOVE if names[k] in ("title", "notes") and v in ("", None) else v)
+                       for k, v in updates.items() if k in names}
+            if not updates:
+                return                                     # where it goes and how it looks follow from the table
         src, call = self._call(plan, data, info)
         plan.add(src.path, srcedit.set_args(src, call, info["method"], updates, self._who(data, info)))
 
@@ -702,6 +719,14 @@ class Session:
             info = self._info(data, oid)
             if info["kind"] == "label":
                 self._set(plan, data, self._info(data, info["panel"]), {"label": None})
+                continue
+            if info.get("method") == "Table":
+                role = info["props"].get("role")
+                if role == "cells":
+                    raise EditError("a table's cells are the table: delete its file to delete the table, or its "
+                                    "rows and columns from its cells")
+                src, call = self._call(plan, data, info)
+                plan.add(src.path, srcedit.set_args(src, call, "Table", {role: REMOVE}, f"the table's {role}"))
                 continue
             if info.get("parent"):
                 parent = self._info(data, info["parent"])
@@ -1394,6 +1419,9 @@ class Session:
         info = self._info(data, a["oid"])
         if info["kind"] != "table":
             raise EditError("only a table has cells")
+        if info.get("fromCode"):
+            raise EditError(f"this table's cells come from {info['fromCode']}() in the code; change them there, or "
+                            "in the data it reads")
         rows = [[str(c) for c in r] for r in a["rows"]]
         if not rows or not rows[0]:
             raise EditError("a table needs at least one cell")
@@ -1410,6 +1438,8 @@ class Session:
 
     def _op_fit_figure(self, plan, data, a):
         """Make the figure the size of what is on it, with a margin: {margin?} (mm)."""
+        if _is_table(data):
+            return "Fit Figure"                            # a table's page always fits it
         m = float(a.get("margin", 3))
         boxes = [e["box"] for e in data["elements"] + data["labels"]
                  if e.get("box") and e["kind"] not in ("zoom",) and not e.get("parent") and e["box"][2] > 0]
@@ -1602,6 +1632,9 @@ class Session:
         out, seen = [], set()
         for oid in self._top(data, [o for o in a["oids"] if not o.startswith("L")]):
             info = self._info(data, oid)
+            if info.get("method") == "Table":
+                return {"ok": False, "error": "a table is copied whole: place its file in a figure with "
+                                              "Insert ▸ Figure…"}
             src, call = self._call(plan, data, info)
             st = src.statement(call)
             var = srcedit.figure_var(src)
@@ -1723,6 +1756,85 @@ class Session:
             self.redo.clear()
             self._sig = self.fingerprint()
         return {"ok": True, "name": name}
+
+    def _own_data(self, name: str, text: str) -> list[str]:
+        """The data files a figure or table keeps for itself: tables/<name>.csv (or .tsv) when its code reads it.
+        A file another figure also reads isn't its own."""
+        out = []
+        for ext in (".csv", ".tsv"):
+            rel = f"tables/{name}{ext}"
+            if rel in text and (self.project / rel).exists():
+                others = [p for p in self.project.glob("*.py") if p.stem != name
+                          and rel in p.read_text(encoding="utf-8", errors="replace")]
+                if not others:
+                    out.append(rel)
+        return out
+
+    def copy_figure(self, a: dict) -> dict:
+        """A whole figure or table to put on the pasteboard: {name} -> {ok, name, kind, text, data: {rel: text}}."""
+        path = Path(self.figure_file(a["name"]))
+        text = path.read_text(encoding="utf-8")
+        data = {rel: (self.project / rel).read_text(encoding="utf-8", errors="replace")
+                for rel in self._own_data(a["name"], text)}
+        return {"ok": True, "name": a["name"], "kind": "table" if is_table_source(text) else "figure",
+                "text": text, "data": data}
+
+    def paste_figure(self, a: dict) -> dict:
+        """A figure or table copied whole, as a new file of this project: {name, text, data?} -> {ok, name}. It is
+        named <name>_copy (or <name> in another project, when that is free); its own data file is copied with it
+        under the new name. One undo step."""
+        base = re.sub(r"\W", "_", a.get("name") or "fig").strip("_") or "fig"
+        if base[0].isdigit():
+            base = "fig_" + base
+        data = a.get("data") or {}
+        taken = lambda n: (self.project / f"{n}.py").exists() or any(
+            (self.project / "tables" / f"{n}{Path(r).suffix}").exists() for r in data)
+        name, n = base, 1
+        if taken(name):
+            name = f"{base}_copy"
+            while taken(name):
+                n += 1
+                name = f"{base}_copy{n}"
+        text = a["text"]
+        files = {}
+        for rel, content in data.items():
+            new_rel = f"tables/{name}{Path(rel).suffix}"
+            text = text.replace(rel, new_rel)
+            files[self.project / new_rel] = content
+        path = self.project / f"{name}.py"
+        files[path] = text
+        with self.edit_lock:
+            written = {}
+            for p, content in files.items():
+                p.parent.mkdir(exist_ok=True)
+                p.write_text(content, encoding="utf-8")
+                written[str(p)] = (None, p.read_bytes())
+            self.history.append({"label": "Paste " + ("Table" if is_table_source(text) else "Figure"), "files": written})
+            self.redo.clear()
+            self._sig = self.fingerprint()
+        return {"ok": True, "name": name}
+
+    def delete_figure(self, a: dict) -> dict:
+        """A figure or table's file deleted, with the data file it keeps for itself: {name} -> {ok, usedBy}. One undo
+        step. `usedBy`: the figures that place it whole (fig.figure), which no longer run."""
+        name = a["name"]
+        path = Path(self.figure_file(name))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        kind = "Table" if is_table_source(text) else "Figure"
+        used = [p.stem for p in self.project.glob("*.py") if p.stem != name
+                and f"{name}.py" in p.read_text(encoding="utf-8", errors="replace")]
+        with self.edit_lock:
+            written = {}
+            for p in [path] + [self.project / rel for rel in self._own_data(name, text)]:
+                written[str(p)] = (p.read_bytes(), None)
+                p.unlink()
+            self.history.append({"label": f"Delete {kind}", "files": written})
+            self.redo.clear()
+            self.renders.pop(name, None)
+            if self.current == name:
+                self.current = None
+            self._sig = self.fingerprint()
+        return {"ok": True, "usedBy": used}
 
     def new_panel(self, a: dict) -> dict:
         """A new panel file from the template, and the panel on the figure: {figure, name, x, y, w, h}."""
@@ -1864,37 +1976,21 @@ class Session:
                                   "pxPerMM": a.get("pxPerMM")})
 
     def export_table(self, a: dict) -> dict:
-        """A table of a figure as a file people edit: {figure, oid?, path, format?} -> {ok, path}. .docx (a Word
-        table in the figure's font and the table's size), .xlsx, .csv or .tsv; with its header and decimals. Without
-        `oid`, the figure's only table."""
+        """A table as a file people edit: {figure, oid?, path, format?, title?} -> {ok, path}. .docx (a Word table
+        in the figure's font and the table's size), .xlsx, .csv or .tsv; with its header and decimals, and, for a
+        Table, its title above and its notes below. Without `oid`, the figure's only table."""
         data = self.render(a["figure"])
         if data.get("error"):
             return {"ok": False, "error": "the figure's code doesn't run; fix it first"}
-        if a.get("oid") is not None:
-            info = self._info(data, a["oid"])
-        else:
-            found = [e for e in data["elements"] if e["kind"] == "table"]
-            if not found:
-                return {"ok": False, "error": "this figure has no table"}
-            info = found[0]
-        if info["kind"] != "table":
-            return {"ok": False, "error": "only a table can be exported as a Word, Excel, CSV or TSV file"}
-        p = info["props"]
-        rows = p["rows"] if p.get("rows") is not None else tables.read_rows(self.project / p["source"])
-        st = data["style"]["props"]
         try:
-            path = tables.write_table(rows, a["path"], a.get("format"), header=p.get("header", True),
-                                      decimals=p.get("decimals"), align=p.get("align"),
-                                      font=p.get("font") or st.get("font") or "Arial",
-                                      size=p.get("size") or st.get("size") or 7, title=a.get("title"),
-                                      grid=bool(p.get("grid")))
+            path = tables.write_rendered(data, a["path"], a.get("format"), a.get("oid"), a.get("title"))
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": path}
 
     def new_table(self, a: dict) -> dict:
-        """A table in a figure of its own: {name, rows, cols} -> {ok, name}. Its cells are tables/<name>.csv (a
-        header row and rows, all empty, to type into), and the figure is sized to the table, without panel letters."""
+        """A table of the paper in a file of its own: {name, rows, cols, title?} -> {ok, name}. An m x n grid of
+        empty cells with lines between them, kept in tables/<name>.csv, to type into; its page is sized to it."""
         name = re.sub(r"\W", "_", a.get("name") or "table").strip("_") or "table"
         if name[0].isdigit():
             name = "table_" + name
@@ -1908,7 +2004,7 @@ class Session:
         csv_path = self.project / "tables" / f"{name}.csv"
         if not (self.project / "style.py").exists():
             (self.project / "style.py").write_text(templates.style_py(a.get("journal")), encoding="utf-8")
-        text = templates.table_figure_py(f"tables/{name}.csv", float(a.get("width", 90)), float(a.get("height", 40)))
+        text = templates.table_py(f"tables/{name}.csv", a.get("title"))
         path = self.project / f"{name}.py"
         with self.edit_lock:
             csv_path.write_text(tables.write_delimited(rows), encoding="utf-8")
@@ -1917,12 +2013,25 @@ class Session:
                                                                  str(csv_path): (None, csv_path.read_bytes())}})
             self.redo.clear()
             self._sig = self.fingerprint()
-        # the figure the size of its table
-        res = self.edit({"figure": name, "op": "fit_figure", "margin": 3})
-        if res.get("ok") and self.history and self.history[-1]["label"].startswith("Figure"):
-            fit = self.history.pop()                    # one undo step with the new files
-            self.history[-1]["files"][str(path)] = (None, fit["files"][str(path)][1])
         return {"ok": True, "name": name}
+
+    def insert_table(self, a: dict) -> dict:
+        """A table embedded in a figure: {figure, rows, cols, x?, y?} -> the edit's result. An m x n grid of empty
+        cells, with lines between them, kept in tables/<figure>_table<N>.csv, to type into on the canvas; undo takes
+        the file away with it."""
+        nr, nc = max(1, int(a.get("rows", 4))), max(1, int(a.get("cols", 3)))
+        (self.project / "tables").mkdir(exist_ok=True)
+        n = 1
+        while (self.project / "tables" / f"{a['figure']}_table{n}.csv").exists():
+            n += 1
+        csv_path = self.project / "tables" / f"{a['figure']}_table{n}.csv"
+        csv_path.write_text(tables.write_delimited([["" for _ in range(nc)] for _ in range(nr)]), encoding="utf-8")
+        res = self.edit({"figure": a["figure"], "op": "insert", "kind": "table", "pxPerMM": a.get("pxPerMM"),
+                         "props": {"source": f"tables/{csv_path.name}", "x": float(a.get("x", 5)),
+                                   "y": float(a.get("y", 5)), "grid": True}, "_new_files": [csv_path]})
+        if not res.get("ok"):
+            csv_path.unlink(missing_ok=True)
+        return res
 
     def export(self, a: dict) -> dict:
         fmt = (a.get("format") or Path(a["path"]).suffix.lstrip(".")).lower()
@@ -1951,6 +2060,11 @@ def _cell(c: str):
         return float(t) if t and t.lower() not in ("nan", "inf", "-inf", "infinity") else c
     except ValueError:
         return c
+
+
+def _is_table(data: dict) -> bool:
+    """Whether a render is of a Table (a table of the paper in its own file) rather than a figure."""
+    return (data.get("figureProps") or {}).get("kind") == "table"
 
 
 def _natural(s: str):

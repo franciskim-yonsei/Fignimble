@@ -198,6 +198,12 @@ final class CanvasView: NSView, NSTextFieldDelegate {
     func toView(_ p: CGPoint) -> CGPoint { CGPoint(x: offset.x + p.x * scale, y: offset.y + p.y * scale) }
     func toView(_ r: CGRect) -> CGRect { CGRect(x: offset.x + r.minX * scale, y: offset.y + r.minY * scale, width: r.width * scale, height: r.height * scale) }
     func toMM(_ p: CGPoint) -> CGPoint { CGPoint(x: (p.x - offset.x) / scale, y: (p.y - offset.y) / scale) }
+    /// The middle of the part of the figure in view (mm), to put something new where the user is looking.
+    func visibleFigureCenter() -> CGPoint? {
+        guard let f = main?.figure, scale > 0 else { return nil }
+        let c = toMM(CGPoint(x: bounds.midX, y: bounds.midY))
+        return CGPoint(x: min(max(c.x, 0), f.size.width), y: min(max(c.y, 0), f.size.height))
+    }
     var paperRect: CGRect { toView(CGRect(origin: .zero, size: figure?.size ?? .zero)) }
 
     // MARK: drawing

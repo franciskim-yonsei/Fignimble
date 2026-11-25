@@ -100,7 +100,11 @@ def main():
         "update_remote": lambda a: need().update_remote(a),
         "new_figure": lambda a: need().new_figure(a),
         "new_panel": lambda a: need().new_panel(a),
+        "copy_figure": lambda a: need().copy_figure(a),
+        "paste_figure": lambda a: need().paste_figure(a),
+        "delete_figure": lambda a: need().delete_figure(a),
         "new_table": lambda a: need().new_table(a),
+        "insert_table": lambda a: need().insert_table(a),
         "import_file": lambda a: need().import_file(a),
         # in their order (by publisher), which a JSON object doesn't keep for the app
         "journals": lambda a: {k: {**j, "rank": i} for i, (k, j) in

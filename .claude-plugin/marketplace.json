@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "fignimble",
+  "description": "Skills for making, checking and exporting publication figures and conference posters with Fignimble.",
+  "owner": {
+    "name": "Pachter Lab",
+    "url": "https://github.com/pachterlab"
+  },
+  "plugins": [
+    {
+      "name": "fignimble",
+      "description": "Build figures and tables from data or notebooks, restyle them for a journal, fix preflight, export, and make posters from a paper's figures.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

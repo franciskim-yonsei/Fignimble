@@ -194,6 +194,8 @@ final class Element {
             let fn = s("function").flatMap { $0 == "draw" ? nil : ":" + $0 } ?? ""
             return (label.map { "\($0)  " } ?? "") + src.lastPathComponent + fn
         case "image": return (label.map { "\($0)  " } ?? "") + ((s("source") ?? "picture") as NSString).lastPathComponent
+        case "text" where role == "title": return "Title  “" + (s("text") ?? "") + "”"
+        case "text" where role == "notes": return "Notes  “" + (s("text") ?? "").replacingOccurrences(of: "\n", with: " · ") + "”"
         case "text": return s("source").map { "Text from " + ($0 as NSString).lastPathComponent } ?? "“" + (s("text") ?? "") + "”"
         case "figure": return (label.map { "\($0)  " } ?? "") + "Figure " + ((s("source") ?? "") as NSString).deletingPathExtension
         case "qr": return "QR code"
@@ -208,10 +210,13 @@ final class Element {
         case "path": return (props["closed"] as? Bool ?? false) ? "Shape" : "Path"
         case "zoom": return "Zoom box"
         case "scalebar": return "Scale bar \(mm(p("length") ?? 0)) \(s("unit") ?? "")"
+        case "table" where role == "cells": return "Cells" + (s("source").map { "  " + ($0 as NSString).lastPathComponent } ?? "")
         case "table": return "Table " + ((s("source") ?? "") as NSString).lastPathComponent
         default: return kind
         }
     }
+    /// Which part of a Table it is: "title", "cells" or "notes" (nil on a figure).
+    var role: String? { props["role"] as? String }
     var symbol: String {
         switch kind {
         case "panel": return "chart.xyaxis.line"
@@ -307,8 +312,13 @@ final class FigureData {
     func element(_ oid: String) -> Element? { all.first { $0.oid == oid } }
     func label(of panel: String) -> Element? { labels.first { $0.panelOid == panel } }
     func labelText(_ oid: String) -> String? { label(of: oid)?.text }
-    /// A figure that is just a table (Insert ▸ New Table…): it also exports as Word, Excel, CSV or TSV.
-    var isTableFigure: Bool { !elements.isEmpty && elements.allSatisfy { $0.kind == "table" } && elements.count == 1 }
+    /// A table of the paper (a Table file: its title, cells and notes, laid out for it).
+    var isTable: Bool { figureProps["kind"] as? String == "table" }
+    /// A table on a page of its own, a Table or an older figure holding only a table: it also exports as Word,
+    /// Excel, CSV or TSV.
+    var isTableFigure: Bool { isTable || (elements.count == 1 && elements[0].kind == "table") }
+    /// The table of a table page: its cells.
+    var tableCells: Element? { isTableFigure ? elements.first { $0.kind == "table" } : nil }
 }
 
 func num(_ v: Any?) -> Double { (v as? NSNumber)?.doubleValue ?? Double(v as? String ?? "") ?? 0 }

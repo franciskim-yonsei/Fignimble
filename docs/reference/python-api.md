@@ -92,14 +92,16 @@ doesn't fit, and fit="shrink" makes the type smaller until it does (never below 
 fig.table(source: 'str | None' = None, x: 'float' = 0, y: 'float' = 0, w: 'float | None' = None, rows: 'list | None' = None, header: 'bool' = True, size: 'float | None' = None, decimals=None, align=None, font: 'str | None' = None, color: 'str' = '#000000', grid: 'bool' = False, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
-A table from a .csv, .tsv or .txt file (`source`, relative to the project) or from `rows` ([["Gene",
+A table from a .csv, .tsv or .txt file (`source`, relative to the project), a function returning its
+rows or a pandas DataFrame (`source=load_genes`), or from `rows` ([["Gene",
 "n"], ["CD3E", 12], ...]). (x, y) is its top-left; `w` (mm) widens it (it is never narrower than its text).
 The first row is the header (`header=False`: none). `decimals` rounds numbers with decimals (2, or
 [None, 0, 2, 3] per column); `align` is "lrr"
 (left/center/right per column), else numbers go right and words left. Size in pt; default the style's.
 Rules above and below the header and at the bottom, as in a printed paper; `grid=True` draws a line between
 every row and column and around the table instead (in `color`). Journals want tables as text:
-the editor's Export Table as Word (and `fignimble table`) writes it as a .docx.
+the editor's Export Table as Word (and `fignimble table`) writes it as a .docx. A table of the paper (Table 1)
+goes in a file of its own: see Table.
 
 ### fig.line
 
@@ -237,6 +239,33 @@ fig.qr(data: 'str', x: 'float' = 0, y: 'float' = 0, w: 'float' = 30, color: 'str
 A QR code for `data` (a link, usually), `w` mm square including its `quiet` border of light modules
 (4, as the standard asks; scanners need it). `level` is how much of it can be damaged and still read:
 "L" 7%, "M" 15%, "Q" 25%, "H" 30% (more makes a denser code). It stays dark on light in dark versions.
+
+## Table
+
+```python
+Table(source=None, rows: 'list | None' = None, style: 'Style | None' = None, title: 'str | None' = None, notes=None, header: 'bool' = True, decimals=None, align=None, grid: 'bool' = False, size: 'float | None' = None, font: 'str | None' = None, color: 'str' = '#000000', w: 'float | None' = None, pad: 'float' = 3, journal: 'str | None' = None, background: 'str | None' = '#FFFFFF')
+```
+
+A table of the paper (Table 1, Supplementary Table 2), in a file of its own, as a figure is:
+
+    from fignimble import *
+    from style import STYLE
+
+    tab = Table("tables/genes.csv", style=STYLE, title="Differentially expressed genes",
+                decimals=[None, 0, 2, 3], notes="FDR, Benjamini-Hochberg.")
+
+Tables are numbered apart from figures, have no panel letters, and go to the journal as text: they export as
+Word (.docx, with the title above and the notes below), Excel, CSV or TSV, and also as PDF, PNG or PowerPoint
+for slides. A figure or poster can show one with fig.figure("table1.py", ...).
+
+source    a .csv, .tsv or .txt file of the project, or a function that returns the rows (a list of lists, the
+          header first) or a pandas DataFrame; it runs at every render, so put slow work under @cached
+rows      the cells written in the code instead of `source`
+title     the table's title, above it (bold)
+notes     what goes under it: footnotes, abbreviations, the test used (a str; "\n" separates lines, or a list)
+header, decimals, align, grid, size, font, color   as in Figure.table
+w         mm: the table at least this wide
+pad       mm of page around the table; the page is sized to the title, table and notes
 
 ## Style
 

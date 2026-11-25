@@ -45,7 +45,7 @@ def _params(fn) -> list[str]:
 PARAMS = {name: _params(getattr(api.Figure, name)) for name in
           ("panel", "image", "text", "line", "arrow", "rect", "ellipse", "bracket", "guide", "layout", "inset",
            "legend", "path", "zoom", "scalebar", "table", "caption")}
-PARAMS.update({"Figure": _params(api.Figure.__init__), "Labels": _params(api.Labels.__init__),
+PARAMS.update({"Figure": _params(api.Figure.__init__), "Table": _params(api.Table.__init__), "Labels": _params(api.Labels.__init__),
                "Style": _params(api.Style.__init__), "Labels.journal": ["name"], "Style.journal": ["name"]})
 PARAMS.update({n: _params(getattr(api, n).__init__) for n in ("Panel", "Image", "Spacer", "Row", "Column", "Grid",
                                                              "Design")})

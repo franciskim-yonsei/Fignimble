@@ -28,7 +28,7 @@ the element.
 | PDF, EPS, SVG | vector, with real, editable TrueType text |
 | TIFF (LZW), PNG, JPEG | pixels, at the resolution you set |
 | PowerPoint (.pptx) | a 16:9 slide with the figure at its real size (scaled down if it doesn't fit), as a PNG with a vector copy that PowerPoint 2019 and later show instead; the caption becomes its alt text. A poster goes on a slide of its own size |
-| Word (.docx), Excel (.xlsx), CSV, TSV | for a figure that is a table: the table as text |
+| Word (.docx), Excel (.xlsx), CSV, TSV | for a table: its cells as text (Word and Excel with its title and notes) |
 
 The dialog asks which journal's rules to meet and the resolution, from 300 to 2400 dpi. It starts at **General**
 (300 dpi for photographs, 600 for pictures with text, 1200 for line art); pick a journal when the figure goes to it.
@@ -84,6 +84,7 @@ saved into `images/`.
 
 ## Tables
 
-Journals want tables as text: **File ▸ Export Table…** writes a table of the figure as an editable Word table, an
-Excel sheet, or a CSV or TSV file.
+Journals want tables as text: **File ▸ Export Table…** writes a table (a `Table` file, or a table drawn in a
+figure) as an editable Word table, with its title and notes, an Excel sheet, or a CSV or TSV file;
+`fignimble export table1.py table1.docx` does it from a terminal.
 See [tables](annotating.md#tables).

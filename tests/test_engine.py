@@ -806,16 +806,17 @@ def test_new_table_cells_and_exports(session, tmp_path):
     name = t["name"]
     r = s.render(name)
     tb = next(e for e in r["elements"] if e["kind"] == "table")
+    assert r["figureProps"]["kind"] == "table"                   # a Table, in a file of its own
     assert tb["props"]["cells"] == [["", ""]] * 3                # no placeholder text
-    assert tb["props"]["grid"] is True                           # lines between all the cells
-    assert r["size"][0] >= tb["box"][0] + tb["box"][2]          # the figure is the table's size
+    assert tb["props"]["grid"] is True                           # a plain grid of cells
+    assert r["size"][0] >= tb["box"][0] + tb["box"][2]          # the page is the table's size
     rows = [["Gene", "n"], ["CD3E", "12"], ["GAPDH", "300"], ["ACTB", "7"]]
     r = s.edit({"figure": name, "op": "table_rows", "oid": tb["oid"], "rows": rows})
     assert r["ok"], r.get("error")
     assert (s.project / "tables" / f"{name}.csv").read_text().splitlines()[3] == "ACTB,7"
-    r = s.edit({"figure": name, "op": "fit_figure", "margin": 3})
-    tb = next(e for e in r["figure"]["elements"] if e["kind"] == "table")
-    assert abs(r["figure"]["size"][1] - (tb["box"][1] + tb["box"][3] + 3)) < 0.2
+    r = s.render(name)
+    tb = next(e for e in r["elements"] if e["kind"] == "table")
+    assert abs(r["size"][1] - (tb["box"][1] + tb["box"][3] + 3)) < 0.2            # the page grew with it
     for fmt in ("docx", "xlsx", "csv", "tsv", "png", "pptx"):
         res = s.export({"figure": name, "path": str(tmp_path / f"t.{fmt}"), "dpi": 300})
         assert res["ok"] and (tmp_path / f"t.{fmt}").exists(), fmt
@@ -838,3 +839,28 @@ def test_clear_guides(session):
     assert r["figure"]["guides"] == [] and ".guide(" not in fig_text(s)
     for _ in range(3):
         s.undo({"figure": "fig1"})
+
+
+def test_copy_paste_delete_whole_figure_and_table(session):
+    s = session
+    t = s.new_table({"name": "tab_cpd", "rows": 2, "cols": 2})["name"]
+    c = s.copy_figure({"name": t})
+    assert c["kind"] == "table" and list(c["data"]) == [f"tables/{t}.csv"]
+    p = s.paste_figure({"name": c["name"], "text": c["text"], "data": c["data"]})
+    new = p["name"]
+    assert new == f"{t}_copy"
+    assert f"tables/{new}.csv" in (s.project / f"{new}.py").read_text()
+    assert (s.project / "tables" / f"{new}.csv").read_text() == c["data"][f"tables/{t}.csv"]
+    assert not s.render(new).get("error")
+    # deleting the copy takes its own CSV with it, and undo brings both back
+    d = s.delete_figure({"name": new})
+    assert d["ok"] and not (s.project / f"{new}.py").exists() and not (s.project / "tables" / f"{new}.csv").exists()
+    assert s.undo({})["ok"]
+    assert (s.project / f"{new}.py").exists() and (s.project / "tables" / f"{new}.csv").exists()
+    # a figure: copied under <name>_copy, deleted, undone
+    f = s.copy_figure({"name": "fig1"})
+    assert f["kind"] == "figure" and f["data"] == {}
+    n = s.paste_figure({"name": "fig1", "text": f["text"]})["name"]
+    assert n == "fig1_copy" and (s.project / "fig1_copy.py").read_text() == f["text"]
+    assert s.delete_figure({"name": n})["ok"] and not (s.project / "fig1_copy.py").exists()
+    s.delete_figure({"name": t}); s.delete_figure({"name": new})

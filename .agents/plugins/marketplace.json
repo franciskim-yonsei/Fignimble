@@ -1,0 +1,21 @@
+{
+  "name": "fignimble",
+  "interface": {
+    "displayName": "Fignimble"
+  },
+  "plugins": [
+    {
+      "name": "fignimble",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/pachterlab/Fignimble.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

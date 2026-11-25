@@ -32,13 +32,14 @@ fig = Figure(width={width:g}, height={height:g}, style=STYLE)
 '''
 
 
-def table_figure_py(source: str, width: float, height: float) -> str:
-    """A figure that is a table: its cells are in `source` (a CSV in the project)."""
+def table_py(source: str, title: str | None = None) -> str:
+    """A table of the paper, as simple as a table gets: a grid of cells (in `source`, a CSV in the project) with lines
+    between them. A title and notes (title=, notes=) can be added in the inspector or the code."""
+    t = f", title={title!r}" if title else ""
     return f'''from fignimble import *
 from style import STYLE
 
-fig = Figure(width={width:g}, height={height:g}, style=STYLE)
-fig.table("{source}", x=3, y=3, grid=True)
+tab = Table("{source}", style=STYLE, grid=True{t})
 '''
 
 
@@ -217,9 +218,23 @@ cleaning data, fitting a model) goes in a function decorated `@cached("data/tabl
 and is kept until its file, its arguments or the listed data change. A rectangle can carry a panel letter
 (`fig.rect(..., label="auto")`), for schematics drawn from shapes and pictures.
 
-Tables: `fig.table("tables/counts.csv", x=4, y=80, decimals=2)` (CSV/TSV in `tables/`, or `rows=[[...], ...]`); keep
-the numbers in the data file, not in the figure. Journals want tables as text: `fignimble table fig1.py 3 table1.docx`
-writes one as a Word table.
+**Tables of the paper** (Table 1, Supplementary Table 2) are files of their own, not figures: `table1.py` makes one
+`Table`, which lays out its title, cells and notes and sizes its page (no positions, no panel letters):
+
+```python
+from fignimble import *
+from style import STYLE
+
+tab = Table("tables/genes.csv", style=STYLE, title="Differentially expressed genes",
+            decimals=[None, 0, 2, 3], notes=["FDR, Benjamini-Hochberg.", "n, cells per gene."])
+```
+
+The cells come from a CSV/TSV in `tables/`, `rows=[[...], ...]`, or a function returning rows or a pandas DataFrame
+(`Table(genes, ...)`, with `@cached` for slow work), so a table computed from data stays tied to it: prefer that to
+pasting numbers. Headers carry units; `decimals=` rounds each column alike. Journals want tables as text:
+`fignimble export table1.py table1.docx` writes a Word table with the title and notes (also .xlsx, .csv, .tsv). To
+show a table in a figure or poster, place it whole: `fig.figure("table1.py", ...)`. Only a small table that is part of
+a figure goes in the figure itself: `fig.table("tables/counts.csv", x=4, y=80)`.
 
 **Figures inside figures, and posters.** `fig.figure("fig2.py", x=20, y=130, w=360)` places another figure of the
 project whole, drawn from its code (scaled to `w`, text and lines with it; `letters=False` drops its panel letters,

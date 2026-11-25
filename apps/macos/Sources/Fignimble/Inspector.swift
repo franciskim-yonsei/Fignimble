@@ -269,6 +269,7 @@ final class Inspector: NSView {
 
     private func figureSection(_ f: FigureData) {
         guard let m = main else { return }
+        if f.isTable { tableSection(f); return }
         section("Figure · \(f.name)")
         pageSizeRow(f)
         if let p = f.poster { posterSection(f, p) }
@@ -347,6 +348,27 @@ final class Inspector: NSView {
     }
 
     /// The page's width and height, in the units picked (mm, cm, in, ft; the code keeps millimeters).
+    /// A Table with nothing selected: its title, notes and the style's type, and how to send it to the journal.
+    private func tableSection(_ f: FigureData) {
+        guard let m = main, let cells = f.tableCells else { return }
+        let set = { (props: [String: Any]) in m.edit(["op": "set", "oid": cells.oid, "props": props]) }
+        let part = { (role: String) in f.elements.first { $0.role == role }?.s("text") ?? "" }
+        section("Table · \(f.name)")
+        note("A table of the paper: numbered apart from the figures, and sent to the journal as an editable Word or Excel table (File ▸ Export Table…). Its page is sized to its title, cells and notes.")
+        row([("Title", Field(part("title"), width: 200) { set(["title": $0]) })])
+        if part("notes").contains("\n") {
+            note("Notes: " + part("notes").replacingOccurrences(of: "\n", with: " · "))
+            row([("", button("Edit Notes in Code", symbol: "doc.text") { m.showCode(of: cells) })])
+        } else {
+            row([("Notes", Field(part("notes"), width: 200) { set(["notes": $0]) })])
+        }
+        row([("", button("Export Table…", symbol: "square.and.arrow.up") { m.exportTable(nil) })])
+        section("Style (every figure and table)")
+        let st = f.style
+        row([("Font", fontPicker(st["font"] as? String ?? "Arial") { if let v = $0 { m.edit(["op": "style", "props": ["font": v]]) } })])
+        row([("Text", numberField(num(st["size"])) { m.edit(["op": "style", "props": ["size": $0]]) }), ("pt", NSView())])
+    }
+
     private func pageSizeRow(_ f: FigureData) {
         guard let m = main else { return }
         let units = MainController.sizeUnits
@@ -401,10 +423,12 @@ final class Inspector: NSView {
         case "bracket":
             row([("X1", numberField(e.p("x1"), width: 48, set("x1"))), ("X2", numberField(e.p("x2"), width: 48, set("x2")))])
             row([("Y", numberField(e.p("y"), width: 48, set("y"))), ("Tick", numberField(e.p("tick"), width: 40, set("tick"))), ("mm", NSView())])
+        case "text" where e.role != nil:
+            break                                       // a table's title and notes go where the table puts them
         case "text":
             row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
         case "table":
-            row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
+            if e.role == nil { row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())]) }
             row([("W", numberField(Double(e.box.width), set("w"))), ("mm (never narrower than its text)", NSView())])
         case "path", "zoom", "scalebar", "legend":
             let b = e.box
@@ -599,8 +623,17 @@ final class Inspector: NSView {
             if e.kind == "rect" { row([("Corner radius", numberField(e.p("radius") ?? 0, width: 40) { setp(["radius": $0]) }), ("mm", NSView())]) }
             row([("Opacity", numberField((e.p("opacity") ?? 1) * 100, width: 40) { setp(["opacity": max(0, min(1, $0 / 100))]) }), ("%", NSView())])
             if e.kind == "rect" { panelLabelRows(f, e) }        // a schematic's background can carry its letter
+        case "text" where e.role != nil:
+            section(e.role == "title" ? "Table title" : "Table notes")
+            if (e.s("text") ?? "").contains("\n") {
+                note((e.s("text") ?? "").replacingOccurrences(of: "\n", with: " · "))
+                row([("", button("Edit in Code", symbol: "doc.text") { m.showCode(of: e) })])
+            } else {
+                add(Field(e.s("text") ?? "", width: 220) { setp(["text": $0]) })
+            }
+            note("Set in the table's code (\(e.role!)=). Its type follows the style; its place follows the table.")
         case "table":
-            if f.isTableFigure {
+            if f.isTableFigure && !f.isTable {
                 section("Page")
                 pageSizeRow(f)
                 row([("", button("Fit Page to Table", symbol: "arrow.up.left.and.arrow.down.right") { m.edit(["op": "fit_figure", "margin": 3]) })])
