@@ -1319,7 +1319,7 @@ class Session:
         if pic["kind"] not in ("image", "inset") and info.get("kind") != "image":
             raise EditError("only a picture's file can be replaced")
         rel = self._bring_in(Path(a["path"]), plan.new_files)
-        self._set(plan, data, pic, {"source": str(rel)})
+        self._set(plan, data, pic, {"source": rel.as_posix()})
         return "Replace Picture"
 
     def _bring_in(self, src: Path, made: list | None = None) -> Path:
@@ -1329,7 +1329,7 @@ class Session:
             raise EditError(f"no file {src}")
         if str(src).startswith(str(self.project) + os.sep):
             return src.relative_to(self.project)
-        dest_dir = self.project / ("panels" if src.suffix == ".py" else
+        dest_dir = self.project / ("panels" if src.suffix.lower() == ".py" else
                                    "tables" if src.suffix.lower() in TABLE_FILES else "images")
         dest_dir.mkdir(exist_ok=True)
         dest = dest_dir / src.name
@@ -1761,7 +1761,10 @@ class Session:
             rel = self._bring_in(src, made)
         except EditError as exc:
             return {"ok": False, "error": str(exc)}
-        res = self._import(a, src, rel, made)
+        try:
+            res = self._import(a, src, rel, made)
+        except SyntaxError as exc:
+            res = {"ok": False, "error": f"{src.name} (line {exc.lineno}): {exc.msg}"}
         if not res.get("ok"):                          # nothing placed: don't leave the copy behind
             for p in made:
                 p.unlink(missing_ok=True)
@@ -1769,25 +1772,25 @@ class Session:
 
     def _import(self, a, src, rel, made) -> dict:
         x, y = float(a.get("x", 5)), float(a.get("y", 5))
-        if src.suffix.lower() in TABLE_FILES:
+        suffix = src.suffix.lower()
+        source = rel.as_posix()
+        if suffix in TABLE_FILES:
             return self.edit({"figure": a["figure"], "op": "insert", "kind": "table", "pxPerMM": a.get("pxPerMM"),
-                              "props": {"source": str(rel), "x": x, "y": y}, "_new_files": made})
-        if src.suffix == ".py" and is_figure_source(src.read_text(encoding="utf-8", errors="replace")):
-            return self._place_figure(a, rel, x, y, made)
-        if src.suffix == ".py":
-            text = src.read_text(encoding="utf-8", errors="replace")
-            fn = "draw"
-            if "def draw(" not in text:
-                defs = [n.name for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)]
-                if not defs:
-                    return {"ok": False, "error": f"{src.name} has no function to draw a panel with"}
-                fn = defs[0]
-            props = {"source": str(rel), "x": x, "y": y, "w": float(a.get("w", 60)), "h": float(a.get("h", 45))}
+                              "props": {"source": source, "x": x, "y": y}, "_new_files": made})
+        if suffix == ".py":
+            text = src.read_text(encoding="utf-8-sig", errors="replace")
+            defs = [n.name for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)]
+            if src.suffix == ".py" and is_figure_source(text):
+                return self._place_figure(a, rel, x, y, made)
+            if not defs:
+                return {"ok": False, "error": f"{src.name} has no function to draw a panel with"}
+            fn = "draw" if "draw" in defs else defs[0]
+            props = {"source": source, "x": x, "y": y, "w": float(a.get("w", 60)), "h": float(a.get("h", 45))}
             if fn != "draw":
                 props["function"] = fn
             return self.edit({"figure": a["figure"], "op": "insert", "kind": "panel", "props": props,
                               "pxPerMM": a.get("pxPerMM"), "_new_files": made})
-        props = {"source": str(rel), "x": x, "y": y, "w": float(a.get("w", 60))}
+        props = {"source": source, "x": x, "y": y, "w": float(a.get("w", 60))}
         if "label" in a:                                 # None: no panel letter (an icon)
             props["label"] = a["label"]
         return self.edit({"figure": a["figure"], "op": "insert", "kind": "image", "pxPerMM": a.get("pxPerMM"),

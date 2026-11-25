@@ -110,6 +110,37 @@ def test_new_figure_undo_redo(tmp_path, make, files):
         s.close()
 
 
+def test_import_panel_uses_portable_path_and_is_undoable(tmp_path):
+    from fignimble.templates import new_project
+
+    project = tmp_path / "figure project"
+    new_project(str(project))
+    source = tmp_path / "sample plot.py"
+    source.write_text("def draw(fig):\n    fig.add_subplot().plot([0, 1], [1, 2])\n", encoding="utf-8")
+    s = Session(str(project), sys.executable)
+    try:
+        r = s.import_file({"figure": "fig1", "path": str(source), "x": 12.5, "y": 7})
+        assert r["ok"], r.get("error")
+        panel = el(r["figure"], "panel")
+        assert not panel.get("error")
+        assert panel["box"][:2] == [12.5, 7]
+        assert 'fig.panel("panels/sample plot.py"' in fig_text(s)
+        copy = project / "panels" / source.name
+        assert copy.read_bytes() == source.read_bytes()
+        assert s.undo({"figure": "fig1"})["ok"]
+        assert not copy.exists() and source.exists()
+        assert s.redo_({"figure": "fig1"})["ok"]
+        assert copy.read_bytes() == source.read_bytes()
+
+        broken = tmp_path / "broken.py"
+        broken.write_text("def draw(fig)\n", encoding="utf-8")
+        r = s.import_file({"figure": "fig1", "path": str(broken)})
+        assert not r["ok"] and "broken.py (line 1)" in r["error"]
+        assert not (project / "panels" / broken.name).exists()
+    finally:
+        s.close()
+
+
 def test_resize_image_keeps_aspect(session):
     edit(session, op="resize", oid="3", box=[4, 63, 40, 30])
     assert 'fig.image("images/cells.png", x=4, y=63, w=40)' in fig_text(session)
