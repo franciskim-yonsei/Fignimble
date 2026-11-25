@@ -11,9 +11,10 @@ hide:
 # Fignimble
 </div>
 
-An editor for multi-panel scientific figures, the part of Illustrator scientists actually use, with Python underneath
-everything. Arrange panels with the mouse, write them in matplotlib, or ask an AI coding agent to build them, all in
-the same figure.
+An editor for multi-panel scientific figures and conference posters, the part of Illustrator scientists actually
+use, with Python underneath everything. Arrange panels with the mouse, write them in matplotlib, or ask an AI coding
+agent to build them, all in the same figure. Then put the paper's figures on a poster that stays up to date with
+their code.
 { .fg-lead }
 
 <div class="fg-buttons" markdown>
@@ -36,9 +37,13 @@ code as a small, readable edit.
 Because the figure is code, it can do what a drawing can't. Panels redraw at their real size, so fonts and line
 widths stay true. Panel letters are added automatically and kept in reading order. One style sets the font and sizes
 of every panel, and a journal preset sets the widths, label style and resolution the journal asks for. Before you
-export, a preflight check finds small text, low-resolution pictures and colours colour-blind readers can't tell
-apart. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
-and have the agent write panels while you watch the figure update.
+export, a preflight check finds small text, low-resolution pictures and colors color-blind readers can't tell
+apart. A figure can be placed whole in another, which makes [posters](guide/posters.md) built from the paper's own
+figures, kept up to date by their code: templates for the usual conference sizes, text boxes with bullets and
+headings, QR codes, and PDFs with bleed and crop marks for the print shop. Every exported file records the code and
+data it was made from. And because the code stays clean, you can open a terminal in the app, start Claude Code, Codex or Gemini CLI,
+and have the agent write panels while you watch the figure update. When the data are on a Linux server, Fignimble
+can [open the project there](guide/remote.md): the server draws the panels and the Mac shows them.
 
 <div class="grid cards" markdown>
 
@@ -47,7 +52,7 @@ and have the agent write panels while you watch the figure update.
     ---
 
     Move, resize, align and distribute panels, pictures and annotations with smart guides. Retype and restyle the
-    texts inside a matplotlib panel, and recolour its lines and bars, without opening its code.
+    texts inside a matplotlib panel, and recolor its lines and bars, without opening its code.
 
     [:octicons-arrow-right-24: The Fignimble window](guide/window.md)
 
@@ -74,9 +79,27 @@ and have the agent write panels while you watch the figure update.
     ---
 
     40 journal presets set widths, fonts, panel labels and resolutions. Preflight checks the figure; export writes
-    PDF, EPS, SVG, TIFF, PNG or JPEG that meet the journal's rules.
+    PDF, EPS, SVG, TIFF, PNG, JPEG or PowerPoint that meet the journal's rules, and tables as Word or Excel.
 
     [:octicons-arrow-right-24: Preflight and export](guide/export.md)
+
+-   :material-presentation:{ .lg .middle } **Posters from the paper's figures**
+
+    ---
+
+    Templates for A0, 48 × 36 in and the other usual conference sizes. Place the paper's figures whole, drawn from
+    their code; write the text in Markdown; add a QR code; export with bleed and crop marks, or as PowerPoint.
+
+    [:octicons-arrow-right-24: Posters](guide/posters.md)
+
+-   :material-source-commit:{ .lg .middle } **Every file knows where it came from**
+
+    ---
+
+    Exported PDFs, PNGs, TIFFs and SVGs record the git commit and a fingerprint of every file they were made from.
+    `fignimble provenance` tells you whether a figure still matches its code and data.
+
+    [:octicons-arrow-right-24: Provenance](guide/export.md#provenance)
 
 </div>
 
@@ -87,7 +110,8 @@ and have the agent write panels while you watch the figure update.
 2. Follow the [quick start](getting-started/quick-start.md) to make a figure with two panels, letter it, style it
    for a journal and export it.
 3. Read [key concepts](getting-started/concepts.md) to see how figures, panels and the canvas fit together.
-4. See [a 37-panel Nature figure rebuilt](examples/nature-rebuild.md) from its authors' code and data.
+4. See [a 37-panel Nature figure rebuilt](examples/nature-rebuild.md) from its authors' code and data, or
+   [make a poster](guide/posters.md) from a paper's figures.
 
 Fignimble is free and open source, from the [Pachter Lab](https://pachterlab.github.io) at Caltech. It is built on
 [Manimble](https://pachterlab.github.io/Manimble/), the slide editor for Manim presentations, and shares its engine

@@ -8,7 +8,7 @@ fig = Figure(width=183, height=110, style=STYLE)
 expression = Panel("panels/expression.py")
 counts = Panel("panels/counts.py")
 heatmap = Panel("panels/heatmap.py")
-bars = Panel("panels/expression.py", function="bars", label="c")
+bars = Panel("panels/expression.py", function="bars")
 
 fig.layout(Design("""
     AAC

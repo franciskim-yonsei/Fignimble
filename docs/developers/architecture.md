@@ -6,9 +6,14 @@ coexists with an agent's edits, the terminal drawer and the agent instruction fi
 
 ```text
 engine/fignimble/   api.py        the figure language (Figure, Style, Labels, Panel, layouts, cached)
+                    journals.py   journal presets, poster sizes and poster templates
                     layout.py     patchwork-style layouts: rows, columns, grids and designs as grids of tracks
                     render.py     runs figure and panel code, lines up plot areas, collects legends, composes with
                                   PyMuPDF, sprites, preflight, export, dark versions
+                    qr.py         a QR code encoder, drawn as vector squares
+                    slides.py     PowerPoint export
+                    tables.py     tables, and their Word and Excel export
+                    templates.py  new projects, figures and posters, and the agent instruction files
                     srcedit.py    canvas edits -> minimal source patches through Python's syntax tree
                     core.py       the session: render worker, edit operations, undo, watching the project
                     rpc.py        JSON lines over stdio for the app (see the engine protocol)
@@ -26,9 +31,14 @@ at its size into a PDF, measures its plot area and texts, and draws again panels
 PyMuPDF composes the pieces into the figure. Every piece is cached in the project's `.fignimble/` under a hash of
 what it depends on: its code, the style, its size, and the project's other files.
 
+A figure placed in another (`fig.figure`) is run in the same worker with its own list of elements, rendered as a
+figure, and its page is placed as one piece; a figure that places itself, directly or through others, is reported
+instead. Export writes a provenance record into the file (PDF metadata, a PNG text chunk, a TIFF description or SVG
+metadata): the Fignimble version, the git commit, and a hash of each file the render read.
+
 ## Editing
 
-A canvas edit (move, resize, retype, recolour) becomes an operation that `srcedit.py` turns into the smallest change
+A canvas edit (move, resize, retype, recolor) becomes an operation that `srcedit.py` turns into the smallest change
 to the source: it finds the call through Python's syntax tree and rewrites one argument. Each edit is one undo step
 holding the files' contents before and after; undo merges line by line, so lines changed since by an agent or another
 editor are left alone.

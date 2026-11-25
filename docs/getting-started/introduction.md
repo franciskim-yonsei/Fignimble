@@ -33,17 +33,34 @@ Fignimble shows the figure and lets you edit it as you would in a drawing app. D
 the panel's code. You can also edit the code yourself, in Fignimble's code pane or any editor, or ask a coding agent
 to. All three change the same files, and Fignimble redraws within a second whenever they change.
 
+A conference poster is made the same way. It is a figure on a larger page, with a title, text and the paper's
+figures placed whole from their own files, so it changes when they do:
+
+```python
+fig = Figure(poster="a0")                                   # 841 x 1189 mm, with type sizes for a poster
+fig.text(source="intro.md", x=20, y=150, width=250)         # prose, with bullets and headings, from Markdown
+fig.figure("fig2.py", x=290, y=150, w=530)                  # Figure 2 of the paper, drawn from its code
+fig.qr("https://github.com/pachterlab/Fignimble", x=740, y=1090, w=80)
+```
+
 ## What you get
 
 - **Automatic panel letters**, in reading order, re-lettered when panels move, styled once for every figure.
 - **Panels that redraw at their size**, so their text and lines are the size the journal sees.
-- **One style for every panel**: font, text size, line widths and colours, set in `style.py`.
+- **One style for every panel**: font, text size, line widths and colors, set in `style.py`.
 - **Journal presets** for 40 journals: column widths, fonts, label convention and the resolutions they require.
 - **Plot areas that line up** across a row or column, whatever the tick labels, as
   [patchwork](https://patchwork.data-imaginist.com) does for ggplot.
-- **Preflight**: small text, low-resolution pictures, colours colour-blind readers confuse, elements off the page.
-- **Export** to vector PDF, EPS and SVG with real text, and to TIFF, PNG and JPEG at the journal's resolution.
+- **Preflight**: small text, low-resolution pictures, colors color-blind readers confuse, elements off the page.
+- **Export** to vector PDF, EPS and SVG with real text, to TIFF, PNG and JPEG at the journal's resolution, and to
+  PowerPoint; tables export as Word or Excel.
 - **A dark version** of every figure for talks, from the same code.
+- **Figures inside figures**: place a figure whole in another, for an overview figure, a graphical abstract or a
+  poster.
+- **Posters**: templates for the usual conference sizes, poster type sizes, text boxes with bullets and headings
+  (or a Markdown file), QR codes, and PDFs with bleed and crop marks for printing.
+- **Provenance**: every exported file records the git commit and a fingerprint of each file it was made from, and
+  `fignimble provenance` checks it against the project.
 - **An AI agent in the terminal** that knows how the project works and can look at its own renders.
 
 ## Requirements

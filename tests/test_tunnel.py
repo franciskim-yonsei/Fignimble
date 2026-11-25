@@ -162,9 +162,34 @@ def test_remote_project(tmp_path, server):
 
 
 def test_no_packages_on_the_server(tmp_path, server):
+    # a Python without pymupdf: the app's `open` fails saying which, after an event it offers the install from
+    py = tmp_path / "python_without_pymupdf"
+    py.write_text('#!/bin/sh\necho "fignimble-missing pymupdf PIL"; exit 1\n')
+    py.chmod(0o755)
+    app = App(tmp_path, server, python=str(py))
+    with pytest.raises(AssertionError, match="doesn't have pymupdf, pillow"):
+        app("open", project=str(app.mirror))
+    assert {"event": "needs_packages", "host": "lab", "python": str(py), "missing": ["pymupdf", "PIL"],
+            "pip": ["pymupdf", "pillow"]} in app.events
+    assert app.close() == 1
+
+    # no Python there at all
     app = App(tmp_path, server, python="/usr/bin/false")
-    assert app.p.wait(timeout=60) == 1
-    assert "can't import matplotlib, pymupdf and PIL" in app.logged()
+    with pytest.raises(AssertionError, match="couldn't run /usr/bin/false"):
+        app("open", project=str(app.mirror))
+    assert not app.events and app.close() == 1
+
+
+def test_connection_lost(tmp_path, server):
+    """When the server side goes, the tunnel ends at once (status 3), not at the app's next request."""
+    app = App(tmp_path, server)
+    app("open", project=str(app.mirror))
+    kids = subprocess.run(["pgrep", "-P", str(app.p.pid)], capture_output=True, text=True).stdout.split()
+    assert kids
+    for k in kids:
+        os.kill(int(k), 9)
+    assert app.p.wait(timeout=20) == 3
+    assert "the connection to lab closed" in app.logged()
 
 
 def test_mirrored_files():

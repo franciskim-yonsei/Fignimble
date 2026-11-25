@@ -36,6 +36,10 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     private(set) var figure: FigureData?
     private(set) var figures: [[String: Any]] = []
     private(set) var journals: [String: [String: Any]] = [:]
+    /// Poster sizes (Figure(poster=...)): key -> {name, size [w, h] mm, body, min_font, margin, rank}.
+    private(set) var posters: [String: [String: Any]] = [:]
+    /// Poster templates for New Figure, in order: {key, poster, landscape, name, use, size [w, h] mm as hung}.
+    private(set) var posterTemplates: [[String: Any]] = []
     private var state: [String: Any] = [:]
     var alignTo = "selection"
     /// The canvas shows the figure's dark version.
@@ -43,6 +47,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     private(set) var python: String?
     /// The server the open project is on (nil: a project on this Mac), and the one the engine was started for.
     private(set) var remote: RemoteProject?
+    /// What the last remote project's Python lacked (the tunnel's needs_packages event), for openRemote.
+    private var remoteNeeds: [String: Any]?
     private var engineFor: RemoteProject?
     private var queue: Task<Void, Never>?
     private var nudgeTotal = CGPoint.zero
@@ -246,10 +252,12 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             engine.onExit = { [weak self] code in
                 guard let self else { return }
                 if self.engineFor != nil && self.remote == nil { return }      // still connecting: openRemote says why
-                let what = self.remote.map { "The connection to \($0.host) closed" } ?? "The Fignimble engine stopped"
-                self.alert(what, "Exit status \(code). The end of its log (~/Library/Logs/fignimble.log):\n\n" + Engine.logTail())
+                if let r = self.remote { self.connectionLost(r); return }
+                self.alert("The Fignimble engine stopped", "Exit status \(code). The end of its log (~/Library/Logs/fignimble.log):\n\n" + Engine.logTail())
             }
             if let j = try? await engine.json("journals") { journals = j.compactMapValues { $0 as? [String: Any] } }
+            if let p = try? await engine.json("posters") { posters = p.compactMapValues { $0 as? [String: Any] } }
+            if let t = try? await engine.json("poster_templates") { posterTemplates = t["templates"] as? [[String: Any]] ?? [] }
             runShotsIfAsked()
             // a project only when one was opened with the app (a figure file or folder double-clicked, dropped on
             // its icon, or given on the command line); otherwise it starts empty: File ▸ Open Recent has the last ones
@@ -307,6 +315,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             refresh()
         case "rendered":
             Task { await refreshState() }
+        case "needs_packages":                          // a server's Python lacks the engine's packages (tunnel.py)
+            remoteNeeds = e
         default: break
         }
     }
@@ -324,6 +334,21 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     }
 
     /// The engine for a project here (nil) or on a server: the running one, or a new one in its place.
+    /// The connection to a project's server closed (the tunnel exits when it does): Reconnect opens it again, with
+    /// the same figure; edits that hadn't gone across are still in the mirror and go then.
+    private func connectionLost(_ r: RemoteProject) {
+        let a = NSAlert()
+        a.messageText = "The connection to \(r.host) closed"
+        a.informativeText = "Edits that hadn't reached \(r.host) yet are kept on this Mac and sent when you reconnect.\n\n"
+            + Engine.logTail(4)
+        a.addButton(withTitle: "Reconnect"); a.addButton(withTitle: "Close")
+        let fig = current
+        a.beginSheetModal(for: window) { [weak self] resp in
+            guard resp == .alertFirstButtonReturn, let self else { return }
+            self.openRemote(r, figure: fig)
+        }
+    }
+
     private func useEngine(for target: RemoteProject?) -> Bool {
         if engineFor == target && engine.isRunning { return true }
         guard let py = python else { return false }
@@ -359,16 +384,27 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
 
     /// A project on an SSH server: the engine started there (over ssh, by fignimble.tunnel), the project's files
     /// mirrored here.
-    func openRemote(_ r: RemoteProject) {
+    func openRemote(_ r: RemoteProject, figure fig: String? = nil) {
         if code.dirty { code.save() }
         enqueue { [self] in
+            busy("Logging in to \(r.host)…")
+            do { try await logIn(r.host) } catch {
+                idle()
+                if case SSH.Failure.canceled = error { return }
+                alert("Couldn't connect to \(r.host)", error.localizedDescription)
+                return
+            }
             busy("Connecting to \(r.host)…")
+            remoteNeeds = nil
             guard useEngine(for: r) else { idle(); return }
             do {
                 let res = try await engine.json("open", ["project": r.mirror])
                 project = res["project"] as? String ?? r.mirror
             } catch {
                 idle()
+                engine.shutdown(wait: 2)                  // the tunnel that couldn't start the engine there
+                engineFor = nil
+                if let needs = remoteNeeds { remoteNeeds = nil; missingRemotePackages(needs, for: r, error: error.localizedDescription); return }
                 alert("Couldn't open \(r.path) on \(r.host)", error.localizedDescription + "\n\n" + Engine.logTail(6))
                 return
             }
@@ -376,7 +412,32 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             remote = r
             MainController.noteRecent(r.recentKey)
             window.representedURL = nil
-            await opened(title: r.title, figure: nil)
+            await opened(title: r.title, figure: fig)
+        }
+    }
+
+    /// The server's Python lacks the engine's packages: install them there with pip, or choose another Python.
+    private func missingRemotePackages(_ needs: [String: Any], for r: RemoteProject, error: String) {
+        let pip = needs["pip"] as? [String] ?? []
+        let a = NSAlert()
+        a.messageText = pip.isEmpty ? "\(r.python) on \(r.host) is too old" : "\(r.python) on \(r.host) doesn't have \(pip.joined(separator: ", "))"
+        a.informativeText = error
+        if !pip.isEmpty { a.addButton(withTitle: "Install") }
+        a.addButton(withTitle: "Choose Another Python…")
+        a.addButton(withTitle: "Cancel")
+        a.beginSheetModal(for: window) { [weak self] resp in
+            guard let self else { return }
+            let choice = resp.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue - (pip.isEmpty ? -1 : 0)
+            if choice == 0 {
+                self.enqueue { [weak self] in
+                    guard let self, await self.installRemotePackages(pip, python: r.python, host: r.host) else { return }
+                    self.openRemote(r)
+                }
+            } else if choice == 1 {
+                let d = RemoteDialog(main: self, mode: .project, prefill: r)
+                d.onOpenProject = { [weak self] p in self?.openRemote(p) }
+                d.begin()
+            }
         }
     }
 
@@ -569,7 +630,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             self.pill.show(text ?? "Rendering…", symbol: nil, tint: nil, spinning: true, cancellable: false)
         }
     }
-    private func idle() { busyShown = false; pill.hide() }
+    func idle() { busyShown = false; pill.hide() }
     func toast(_ text: String, error: Bool = false) {
         busyShown = false
         pill.show(text, symbol: error ? "exclamationmark.triangle.fill" : "checkmark.circle.fill", tint: error ? .systemOrange : .systemGreen)
@@ -659,7 +720,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     func showCode(of e: Element) {
         setDrawer(visible: true)
         drawer.show(.code)
-        if e.kind == "panel" || e.kind == "inset", let f = e.codeFile { code.open(f, line: e.codeLine) }
+        if e.kind == "panel" || e.kind == "inset" || e.kind == "figure" || (e.kind == "text" && e.s("source") != nil),
+           let f = e.codeFile { code.open(f, line: e.codeLine) }
         else if let f = e.file { code.open(f, line: e.line) }
     }
 
@@ -1100,16 +1162,55 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         let unitMenu = NSPopUpButton(frame: .zero, pullsDown: false)
         unitMenu.addItems(withTitles: ["millimeters (mm)", "centimeters (cm)", "inches (in)", "feet (ft)"])
         unitMenu.selectItem(at: unit)
-        let change = Action { _ in
-            // the size typed stays the same size, in the new unit
-            let old = units[unit].1
-            unit = unitMenu.indexOfSelectedItem
-            for f in [w, h] { if let v = Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) { f.stringValue = mm(v * old / units[unit].1) } }
+        // a figure of any size, or a poster from a template of a usual conference size (title, sections, a figure, a
+        // QR code); the template sets how it hangs, and Landscape turns it
+        let templates = posterTemplates
+        let kind = NSPopUpButton(frame: .zero, pullsDown: false)
+        kind.addItem(withTitle: "Figure (any size)")
+        kind.menu?.addItem(.separator())
+        for t in templates {
+            kind.addItem(withTitle: "Poster: " + (t["name"] as? String ?? ""))
+            kind.lastItem?.toolTip = (t["use"] as? String).map { $0.prefix(1).uppercased() + $0.dropFirst() + ". Check your conference's instructions." }
+            kind.lastItem?.representedObject = t
         }
-        unitMenu.target = change; unitMenu.action = #selector(Action.fire(_:))
-        let grid = NSGridView(views: [[NSTextField(labelWithString: "Name"), name], [NSTextField(labelWithString: "Width"), w],
+        kind.widthAnchor.constraint(equalToConstant: 210).isActive = true
+        let landscape = NSButton(checkboxWithTitle: "Landscape", target: nil, action: nil)
+        let template = { kind.selectedItem?.representedObject as? [String: Any] }
+        let posterSize = { () -> (Double, Double)? in
+            guard let t = template(), let k = t["poster"] as? String, let s = self.posters[k]?["size"] as? [Any], s.count == 2 else { return nil }
+            let (a, b) = (num(s[0]), num(s[1]))
+            return landscape.state == .on ? (max(a, b) == a ? (a, b) : (b, a)) : (min(a, b) == a ? (a, b) : (b, a))
+        }
+        var lastTemplate: String?
+        let showKind = {
+            // a template just picked hangs its usual way
+            if let t = template(), let k = t["key"] as? String, k != lastTemplate {
+                lastTemplate = k
+                landscape.state = (t["landscape"] as? Bool ?? false) ? .on : .off
+            }
+            let p = posterSize()
+            for f in [w, h] { f.isEnabled = p == nil }
+            landscape.isEnabled = p != nil
+            if let (pw, ph) = p {
+                w.stringValue = show(pw); h.stringValue = show(ph)
+                if name.stringValue.hasPrefix("fig") { name.stringValue = self.figures.contains { $0["name"] as? String == "poster" } ? "poster2" : "poster" }
+            }
+        }
+        let change = Action { s in
+            if (s as? NSPopUpButton) === unitMenu {
+                // the size typed stays the same size, in the new unit
+                let old = units[unit].1
+                unit = unitMenu.indexOfSelectedItem
+                for f in [w, h] { if let v = Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) { f.stringValue = mm(v * old / units[unit].1) } }
+            }
+            showKind()
+        }
+        for c in [unitMenu, kind, landscape] as [NSControl] { c.target = change; c.action = #selector(Action.fire(_:)) }
+        landscape.isEnabled = false
+        let grid = NSGridView(views: [[NSTextField(labelWithString: "Name"), name], [NSTextField(labelWithString: "Kind"), kind],
+                                      [NSView(), landscape], [NSTextField(labelWithString: "Width"), w],
                                       [NSTextField(labelWithString: "Height"), h], [NSTextField(labelWithString: "Units"), unitMenu]])
-        grid.frame = NSRect(x: 0, y: 0, width: 260, height: 124)
+        grid.frame = NSRect(x: 0, y: 0, width: 280, height: 190)
         a.accessoryView = grid; a.addButton(withTitle: "Create"); a.addButton(withTitle: "Cancel")
         a.beginSheetModal(for: window) { [weak self] r in
             _ = change
@@ -1118,9 +1219,11 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             let k = units[unit].1
             let num = { (f: NSTextField, d: Double) -> Double in (Double(f.stringValue.replacingOccurrences(of: ",", with: ".")) ?? d / k) * k }
             let width = (num(w, 183) * 100).rounded() / 100, height = (num(h, 120) * 100).rounded() / 100
+            var args: [String: Any] = ["name": name.stringValue, "width": width, "height": height]
+            if let t = template() { args = ["name": name.stringValue, "poster": t["poster"] as? String ?? "a0", "landscape": landscape.state == .on] }
             self.enqueue { [weak self] in guard let self else { return }
                 do {
-                    let res = try await self.engine.json("new_figure", ["name": name.stringValue, "width": width, "height": height])
+                    let res = try await self.engine.json("new_figure", args)
                     if let n = res["name"] as? String { await self.refreshState(); await self.load(n) }
                     else if let e = res["error"] as? String { self.toast(e, error: true) }
                 } catch { self.toast(error.localizedDescription, error: true) }
@@ -1157,6 +1260,35 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         o.beginSheetModal(for: window) { [weak self] r in
             guard let self, r == .OK, let u = o.url, let f = self.figure else { return }
             self.importFiles([u], at: CGPoint(x: f.size.width / 2 - 30, y: f.size.height / 2 - 22))
+        }
+    }
+
+    /// Insert ▸ Figure…: another figure of the project, placed whole and drawn from its code.
+    @objc func insertFigure(_ sender: Any?) {
+        guard let p = project, let name = current else { return }
+        let others = figures.compactMap { $0["name"] as? String }.filter { $0 != name }
+        guard !others.isEmpty else { toast("The project has no other figure to place: File ▸ New Figure makes one", error: true); return }
+        let a = NSAlert(); a.messageText = "Place a figure"
+        a.informativeText = "The figure is drawn from its code every time, so it stays as that figure is: change it there and it changes here. Scaling it scales its text and lines."
+        let pick = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 200, height: 26), pullsDown: false)
+        pick.addItems(withTitles: others)
+        a.accessoryView = pick; a.addButton(withTitle: "Place"); a.addButton(withTitle: "Cancel")
+        a.beginSheetModal(for: window) { [weak self] r in
+            guard let self, r == .alertFirstButtonReturn, let n = pick.titleOfSelectedItem else { return }
+            let m = num(self.figure?.poster?["margin"])
+            self.importFiles([URL(fileURLWithPath: p + "/" + n + ".py")], at: CGPoint(x: max(5, m), y: max(5, m)))
+        }
+    }
+
+    /// Insert ▸ QR Code…: a QR code for a link, in the figure's lower right corner.
+    @objc func insertQR(_ sender: Any?) {
+        guard let f = figure else { return }
+        promptText("Link for the QR code", "https://") { [weak self] t in
+            guard let self, !t.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            let w = f.poster != nil ? 60.0 : 25.0
+            let m = max(num(f.poster?["margin"]), 5)
+            self.edit(["op": "insert", "kind": "qr", "props": ["data": t, "x": max(0, (Double(f.size.width) - w - m).rounded()),
+                                                              "y": max(0, (Double(f.size.height) - w - m).rounded()), "w": w]])
         }
     }
 
@@ -1256,13 +1388,24 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         let darkBox = NSButton(checkboxWithTitle: "Dark version", target: nil, action: nil)
         darkBox.state = darkPreview ? .on : .off
         darkBox.toolTip = "White text and lines on black, for slides"
+        // for a print shop: the page past the figure's edges, and where to cut
+        let bleed = NSTextField(string: f.poster != nil ? "3" : "0")
+        bleed.widthAnchor.constraint(equalToConstant: 36).isActive = true
+        bleed.toolTip = "Millimeters printed past each edge, so trimming leaves no white line (PDF)"
+        let marksBox = NSButton(checkboxWithTitle: "Crop marks", target: nil, action: nil)
+        marksBox.toolTip = "Lines outside the figure showing where to cut it (PDF)"
+        let poster = f.poster != nil
         let refresh = { (pickDPI: Bool) in
             let fmt = formats[format.indexOfSelectedItem]
             let d = self.journalDPI(key())
             let raster = ["tiff", "png", "jpg"].contains(fmt)
             let tableFile = ["docx", "xlsx", "csv", "tsv"].contains(fmt)
             for v in [dpi, journal, cmykBox, outlineBox, darkBox] as [NSControl] { v.isEnabled = !tableFile }
-            if pickDPI { dpi.stringValue = "\(raster ? (pictures ? d.combination : d.line) : (fmt == "pptx" ? 300 : 600))" }
+            for v in [bleed, marksBox] as [NSControl] { v.isEnabled = fmt == "pdf" }
+            if pickDPI {
+                dpi.stringValue = poster && key() == nil ? "\(raster ? 300 : (fmt == "pptx" ? 200 : 600))"
+                    : "\(raster ? (pictures ? d.combination : d.line) : (fmt == "pptx" ? 300 : 600))"
+            }
             p.allowedContentTypes = [UTType(filenameExtension: fmt) ?? .data]
             p.nameFieldStringValue = name + "." + fmt
             if tableFile {
@@ -1272,7 +1415,13 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
                 return
             }
             if fmt == "pptx" {
-                note.stringValue = "A 16:9 slide with the figure on it: at its real size when it fits, else scaled to fit. The picture is a PNG at this resolution, with a vector copy PowerPoint 2019 and later show instead; the caption becomes its alt text."
+                note.stringValue = poster
+                    ? "A slide the poster's size (PowerPoint's largest is 56 inches a side; a larger poster is scaled to it), the poster filling it: a PNG at this resolution, with a vector copy PowerPoint 2019 and later show instead."
+                    : "A 16:9 slide with the figure on it: at its real size when it fits, else scaled to fit. The picture is a PNG at this resolution, with a vector copy PowerPoint 2019 and later show instead; the caption becomes its alt text."
+                return
+            }
+            if poster && key() == nil {
+                note.stringValue = "Posters are printed at 150 to 300 dpi at full size: pictures below 150 dpi are reported, and TIFF, PNG and JPEG are written at 300 dpi at most (more would be hundreds of megapixels). PDF stays vector; give a print shop a PDF with the bleed and crop marks they ask for. The file is measured once written and records what it was made from."
                 return
             }
             let who = key().map { self.journalName($0) } ?? "General"
@@ -1290,7 +1439,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         let top = NSStackView(views: [NSTextField(labelWithString: "Format:"), format, NSTextField(labelWithString: "For:"), journal])
         let boxes = NSStackView(views: [NSTextField(labelWithString: "Resolution:"), dpi, NSTextField(labelWithString: "dpi"),
                                         NSView(), cmykBox, outlineBox, darkBox])
-        let acc = NSStackView(views: [top, boxes, note]); acc.orientation = .vertical; acc.alignment = .leading
+        let print = NSStackView(views: [NSTextField(labelWithString: "Bleed:"), bleed, NSTextField(labelWithString: "mm"), marksBox])
+        let acc = NSStackView(views: [top, boxes, print, note]); acc.orientation = .vertical; acc.alignment = .leading
         acc.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         p.accessoryView = acc
         refresh(true)
@@ -1301,6 +1451,10 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             let fmt = formats[format.indexOfSelectedItem], d = dpiValue()
             let dark = darkBox.state == .on, cmyk = cmykBox.state == .on, outline = outlineBox.state == .on
             var args: [String: Any] = ["figure": name, "path": u.path, "format": fmt, "dpi": d, "dark": dark, "cmyk": cmyk, "outline": outline]
+            if fmt == "pdf" {
+                args["bleed"] = max(0, min(25, Double(bleed.stringValue.replacingOccurrences(of: ",", with: ".")) ?? 0))
+                args["marks"] = marksBox.state == .on
+            }
             if let j = key() { args["journal"] = j }
             self.enqueue { [weak self] in guard let self else { return }
                 busy("Exporting…")
@@ -1510,7 +1664,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             item.title = selectedLabel?.detached == true ? "Link Label to Panel" : "Unlink Label from Panel"
             return selectedLabel != nil
         case #selector(selectAll(_:)): return figure != nil
-        case #selector(newPanel(_:)), #selector(insertImage(_:)), #selector(insertPanelCode(_:)), #selector(exportFigure(_:)),
+        case #selector(insertFigure(_:)): return figure != nil && figures.count > 1
+        case #selector(newPanel(_:)), #selector(insertImage(_:)), #selector(insertPanelCode(_:)), #selector(exportFigure(_:)), #selector(insertQR(_:)),
              #selector(labelsOutside(_:)), #selector(labelsInside(_:)), #selector(labelJournal(_:)), #selector(refreshFigure(_:)),
              #selector(showBioCartoon(_:)), #selector(copyFigure(_:)):
             return figure != nil

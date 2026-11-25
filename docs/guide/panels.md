@@ -38,18 +38,18 @@ opens the file in VS Code or your editor.
 ## Texts and marks inside a panel
 
 Click an axis label, a tick, a legend entry or a title inside a panel: the inspector edits that text, its size, its
-colour, bold and italic. Double-click it, or press Return, to retype it on the canvas. When the text is a string
+color, bold and italic. Double-click it, or press Return, to retype it on the canvas. When the text is a string
 literal in the panel's code, Fignimble changes it there
 (`ax.set_xlabel("UMAP 1", fontsize=9, color="#D55E00")`); otherwise it is kept as an override on the panel's line
 (`texts={...}`, `text_style={...}`), which **Back to What the Code Draws** removes.
 
 <img class="fg-shot" src="../../assets/panel-text.jpg" alt="An axis label inside a panel, selected and edited in the inspector">
 
-Select a panel and the inspector lists each colour it draws with. Change one and every line, bar or point of that
-colour follows; double-click a single mark to recolour just it. The colour is changed in the panel's code when it is
+Select a panel and the inspector lists each color it draws with. Change one and every line, bar or point of that
+color follows; double-click a single mark to recolor just it. The color is changed in the panel's code when it is
 written there once, otherwise kept as `colors={...}` on the panel's line.
 
-<img class="fg-shot" src="../../assets/recolour.jpg" alt="The colours of a panel listed in the inspector">
+<img class="fg-shot" src="../../assets/recolour.jpg" alt="The colors of a panel listed in the inspector">
 
 ## Packages a panel needs
 
@@ -87,13 +87,13 @@ Deprecation and other warnings from a panel's code are kept with the panel inste
 
 **Insert ▸ Panel from SSH Server…** lists a folder on a server (hosts come from `~/.ssh/config`) and copies the panel
 code you pick into `panels/`, its first line saying where it came from. Right-click the panel ▸ **Update from Server**
-fetches it again, as one undo step. Fignimble connects with your SSH key, an ssh-agent, or a connection you opened in
-the terminal with ControlMaster; it can't type a password. Data the panel reads has to be copied too. To work on a whole
+fetches it again, as one undo step. If the server asks for a password or a code, Fignimble shows the question
+([Logging in](remote.md#logging-in)). Data the panel reads has to be copied too. To work on a whole
 project where it is, with its data, open it on the server instead: [Projects on an SSH server](remote.md).
 
 ## Dark mode in panel code
 
-Every figure has a [dark version](colour.md#dark-versions). Colours the style sets turn light; colours panel code
+Every figure has a [dark version](colour.md#dark-versions). Colors the style sets turn light; colors panel code
 sets itself stay as they are. Use `is_dark()` where you would write black:
 
 ```python

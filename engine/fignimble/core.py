@@ -29,9 +29,10 @@ from .srcedit import REMOVE, EditError, Raw, Source
 ENGINE_ROOT = str(Path(__file__).resolve().parent.parent)
 GEOMETRY = {"panel": ("x", "y"), "image": ("x", "y"), "text": ("x", "y"), "rect": ("x", "y"),
             "ellipse": ("x", "y"), "line": ("x1", "y1", "x2", "y2"), "bracket": ("x1", "x2", "y"),
-            "layout": ("x", "y"), "legend": ("x", "y")}
+            "layout": ("x", "y"), "legend": ("x", "y"), "figure": ("x", "y"), "qr": ("x", "y"), "table": ("x", "y")}
 METHOD_KIND = {"panel": "panel", "image": "image", "text": "text", "line": "line", "arrow": "line", "rect": "rect",
-               "ellipse": "ellipse", "bracket": "bracket", "layout": "layout", "legend": "legend", "path": "path"}
+               "ellipse": "ellipse", "bracket": "bracket", "layout": "layout", "legend": "legend", "path": "path",
+               "figure": "figure", "qr": "qr", "table": "table"}
 BOXED = ("panel", "image", "rect", "ellipse", "layout")
 TABLE_FILES = (".csv", ".tsv")
 INSET_KEYS = {"x", "y", "w", "h", "label", "group", "name"}
@@ -561,7 +562,7 @@ class Session:
         """Change arguments of one element: {oid, props}."""
         info = self._info(data, a["oid"])
         props = {k: (REMOVE if (v is None and k in ("label_dx", "label_dy", "label_x", "label_y", "group", "name", "crop", "font", "flip",
-                                                    "width", "texts", "colors", "text_style"))
+                                                    "width", "texts", "colors", "text_style", "height", "fit"))
                      or (v is False and k in ("locked", "hidden")) else v)
                  for k, v in a["props"].items()}
         if info["kind"] == "label":
@@ -665,8 +666,14 @@ class Session:
                    for px, py in info["props"]["points"]]
             self._set(plan, data, info, {"points": pts})
             return "Resize"
-        if k == "image" and info["props"].get("h") is None and not a.get("free"):
+        if k in ("image", "figure") and info["props"].get("h") is None and not a.get("free"):
             self._set(plan, data, info, {"x": x, "y": y, "w": w})
+        elif k == "figure" and info["props"].get("w") is None:
+            self._set(plan, data, info, {"x": x, "y": y, "h": h})
+        elif k == "figure":
+            self._set(plan, data, info, {"x": x, "y": y, "w": w, "h": h})
+        elif k == "qr":
+            self._set(plan, data, info, {"x": x, "y": y, "w": round(max(w, h), 2)})
         elif k in BOXED:
             self._set(plan, data, info, {"x": x, "y": y, "w": w, "h": h})
         elif k == "text":
@@ -1452,7 +1459,8 @@ class Session:
             props["points"] = [tuple(q) for q in props["points"]]
         src, end, ind = self._insert_point(plan, data)
         var = srcedit.figure_var(src)
-        first = {"panel": "source", "image": "source", "text": "text", "table": "source"}.get(kind)
+        first = {"panel": "source", "image": "source", "text": "text", "table": "source", "figure": "source",
+                 "qr": "data"}.get(kind)
         args = [props.pop(first)] if first else []
         if kind in ("line", "arrow"):
             args = [props.pop(k) for k in ("x1", "y1", "x2", "y2")]
@@ -1473,9 +1481,14 @@ class Session:
         return src, call
 
     def _op_figure(self, plan, data, a):
-        """Figure settings: {props: {width, height, background}}."""
+        """Figure settings: {props: {width, height, background, poster, landscape, margin}}. None takes width,
+        height, poster, landscape or margin out of the call (a poster's size then comes from its preset)."""
         src, call = self._figure_call(plan, data)
-        plan.add(src.path, srcedit.set_args(src, call, "Figure", a["props"], "the figure"))
+        props = {k: (REMOVE if v is None and k in ("width", "height", "poster", "landscape", "margin") else v)
+                 for k, v in a["props"].items()}
+        if props.get("landscape") is False:
+            props["landscape"] = REMOVE
+        plan.add(src.path, srcedit.set_args(src, call, "Figure", props, "the figure"))
         return "Figure Size" if {"width", "height"} & set(a["props"]) else "Figure Settings"
 
     def _label_style(self, plan, data, props: dict):
@@ -1685,16 +1698,24 @@ class Session:
     # --- files the editor adds ---
 
     def new_figure(self, a: dict) -> dict:
-        name = a.get("name") or "fig"
+        """A new figure file: {name, width, height, journal?}, or a poster: {name, poster, landscape?}."""
+        name = a.get("name") or ("poster" if a.get("poster") else "fig")
         base, n = name, 1
         while (self.project / f"{name}.py").exists():
             n += 1
             name = f"{base}{n}"
         if not name.isidentifier():
             return {"ok": False, "error": f"{name} can't be a figure name: use letters, digits and _"}
-        if not (self.project / "style.py").exists():
-            (self.project / "style.py").write_text(templates.style_py(a.get("journal")), encoding="utf-8")
-        text = templates.figure_py(float(a.get("width", 183)), float(a.get("height", 120)))
+        if a.get("poster"):
+            try:
+                text = templates.poster_py(a["poster"], bool(a.get("landscape")),
+                                           [f["name"] for f in self.figures()])
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+        else:
+            if not (self.project / "style.py").exists():
+                (self.project / "style.py").write_text(templates.style_py(a.get("journal")), encoding="utf-8")
+            text = templates.figure_py(float(a.get("width", 183)), float(a.get("height", 120)))
         path = self.project / f"{name}.py"
         with self.edit_lock:
             path.write_text(text, encoding="utf-8")
@@ -1742,6 +1763,8 @@ class Session:
         if src.suffix.lower() in TABLE_FILES:
             return self.edit({"figure": a["figure"], "op": "insert", "kind": "table", "pxPerMM": a.get("pxPerMM"),
                               "props": {"source": str(rel), "x": x, "y": y}, "_new_files": made})
+        if src.suffix == ".py" and is_figure_source(src.read_text(encoding="utf-8", errors="replace")):
+            return self._place_figure(a, rel, x, y, made)
         if src.suffix == ".py":
             text = src.read_text(encoding="utf-8", errors="replace")
             fn = "draw"
@@ -1760,6 +1783,26 @@ class Session:
             props["label"] = a["label"]
         return self.edit({"figure": a["figure"], "op": "insert", "kind": "image", "pxPerMM": a.get("pxPerMM"),
                           "props": props, "_new_files": made})
+
+    def _place_figure(self, a, rel, x, y, made) -> dict:
+        """Another figure of the project placed whole (fig.figure): at its own size when it fits, else as wide as
+        the room to the right of (x, y)."""
+        if rel.parent != Path(".") or rel.stem == a["figure"]:
+            return {"ok": False, "error": f"{rel} can't be placed: a figure takes the project's other figure files"
+                    if rel.stem != a["figure"] else "a figure can't be placed in itself"}
+        outer = self.render(a["figure"], a.get("pxPerMM"))
+        inner = self.render(rel.stem, 4.0)
+        if inner.get("error"):
+            return {"ok": False, "error": f"{rel} doesn't run; fix it first"}
+        W, H = inner["size"]
+        room = max(outer["size"][0] - x - 5, 20) if not outer.get("error") else W
+        props = {"source": str(rel), "x": x, "y": y}
+        if a.get("w"):
+            props["w"] = float(a["w"])
+        elif W > room:
+            props["w"] = round(room, 1)
+        return self.edit({"figure": a["figure"], "op": "insert", "kind": "figure", "props": props,
+                          "pxPerMM": a.get("pxPerMM"), "_new_files": made})
 
     # --- panels from an SSH server ---
 
@@ -1893,7 +1936,8 @@ class Session:
                                         "file": self.figure_file(a["figure"]), "path": a["path"],
                                         "format": a.get("format"), "dpi": a.get("dpi", 600),
                                         "dark": bool(a.get("dark")), "cmyk": bool(a.get("cmyk")),
-                                        "outline": bool(a.get("outline")), "journal": a.get("journal")}, timeout=600)
+                                        "outline": bool(a.get("outline")), "journal": a.get("journal"),
+                                        "bleed": float(a.get("bleed") or 0), "marks": bool(a.get("marks"))}, timeout=600)
 
 
 def _cell(c: str):

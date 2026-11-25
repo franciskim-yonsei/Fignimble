@@ -121,6 +121,9 @@ final class Engine {
         env["FIGNIMBLE_PYTHON"] = python
         env["MPLBACKEND"] = "Agg"
         env["PYTHONUNBUFFERED"] = "1"
+        // ssh to servers through the connection the app logged in with (SSHLogin.swift)
+        SSH.makeControlDir()
+        env["FIGNIMBLE_SSH_SHARE"] = SSH.controlDir
         let path = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         env["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/Library/TeX/texbin"] + path.split(separator: ":").map(String.init))
             .reduce(into: [String]()) { result, item in

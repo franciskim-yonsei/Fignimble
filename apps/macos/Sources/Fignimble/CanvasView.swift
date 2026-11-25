@@ -140,7 +140,8 @@ final class CanvasView: NSView, NSTextFieldDelegate {
     /// The resolution (pixels per mm) sprites should have at this zoom.
     var wantedPxPerMM: Double {
         let px = Double(scale * (window?.backingScaleFactor ?? 2))
-        return [6.0, 8, 12, 16, 24, 32, 48, 64].first { $0 >= px * 0.9 } ?? 64
+        // a poster seen whole needs only a few pixels per millimeter (the engine also caps each piece's picture)
+        return [2.0, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64].first { $0 >= px * 0.9 } ?? 64
     }
 
     // MARK: zoom and pan
@@ -524,7 +525,7 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         case "text": return i % 2 == 0 || i == 3 || i == 7    // corners scale, sides set the wrap width
         case "path", "zoom": return true
         case "bracket": return i == 3 || i == 7
-        case "panel", "image", "rect", "ellipse", "layout", "inset": return true
+        case "panel", "image", "rect", "ellipse", "layout", "inset", "figure", "qr": return true
         default: return false
         }
     }
@@ -996,6 +997,8 @@ final class CanvasView: NSView, NSTextFieldDelegate {
     private func keepsAspect(_ oid: String, handle: Int) -> Bool {
         guard let e = figure?.element(oid) else { return false }
         if e.kind == "text" { return handle % 2 == 0 }          // corners scale it; sides set its wrap width
+        if e.kind == "qr" { return true }
+        if e.kind == "figure" { return e.props["h"] is NSNull || e.props["w"] is NSNull }
         return e.kind == "image" && e.props["h"] is NSNull
     }
 
@@ -1049,6 +1052,13 @@ final class CanvasView: NSView, NSTextFieldDelegate {
 
     private func doubleClick(_ el: Element) {
         switch el.kind {
+        case "text" where el.s("source") != nil:
+            main?.showCode(of: el)                              // its text is in a file: edit it there
+        case "figure":
+            // a figure placed whole opens as itself; edits there show here
+            if let n = el.figureName { main?.show(figure: n) } else { main?.showCode(of: el) }
+        case "qr":
+            main?.promptText("QR code link", el.s("data") ?? "") { [weak self] t in self?.main?.edit(["op": "set", "oid": el.oid, "props": ["data": t]]) }
         case "text":
             beginEditor(oid: el.oid, at: CGPoint(x: el.p("x") ?? el.box.minX, y: el.box.minY),
                         size: el.p("size") ?? (figure?.style["size"] as? NSNumber)?.doubleValue ?? 7, text: el.s("text") ?? "", align: el.s("align"))

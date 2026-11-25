@@ -38,7 +38,7 @@ Things to try:
 - Click the y-axis label of panel A and retype it; then open `panels/expression.py` and see the change.
 - **View ▸ Dark Version of Figure** (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>D</kbd>).
 - In `style.py`, change `case="upper"` to `"lower"`, or the journal, and save.
-- **View ▸ Colour Vision ▸ Deuteranopia**.
+- **View ▸ Color Vision ▸ Deuteranopia**.
 - Open the terminal and ask an agent to add a seventh panel.
 
 For a large, real figure, see [rebuilding a Nature figure](examples/nature-rebuild.md): 37 panels, lettered a to ak,

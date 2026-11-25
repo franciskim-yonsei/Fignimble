@@ -146,3 +146,91 @@ def width(journal: str, columns="double") -> float:
     if columns in ("single", "double"):
         return float((min if columns == "single" else max)(ws.values()))
     raise ValueError(f"{j['name']} has no {columns!r} width; it has {', '.join(ws)}")
+
+
+# --- posters ---
+#
+# Sizes (mm, portrait: width x height) of the usual conference posters, and type sizes for reading them from a meter or
+# two: `body` for body text, `min_font` the smallest the preflight check accepts (captions, tick labels of the
+# figures placed on it, at the size they are printed), `title` and `heading` for the template, `labels` for panel
+# letters. `margin` (mm) is kept clear of anything that must print: poster printers trim, and some can't print to the
+# edge. Posters are printed at 150-300 dpi at full size, so pictures need far fewer pixels per inch than in a journal.
+POSTER_DPI = {"photo": 150, "combination": 200, "line": 300}
+POSTER_MAX_DPI = 300            # rasters above this, at a poster's size, are hundreds of megapixels for nothing
+
+_HUGE = {"body": 32, "min_font": 22, "title": 120, "heading": 54, "labels": 42, "linewidth": 1.8, "margin": 25}
+_BIG = {"body": 28, "min_font": 18, "title": 96, "heading": 44, "labels": 36, "linewidth": 1.5, "margin": 20}
+_MID = {"body": 22, "min_font": 14, "title": 72, "heading": 34, "labels": 28, "linewidth": 1.2, "margin": 15}
+_SMALL = {"body": 16, "min_font": 10, "title": 54, "heading": 26, "labels": 20, "linewidth": 1.0, "margin": 12}
+# keys are width x height as the poster stands upright; "48x36" (the other way round) means the same poster turned
+POSTERS = {
+    "a0": {"name": "A0", "size": (841, 1189), **_BIG},
+    "a1": {"name": "A1", "size": (594, 841), **_MID},
+    "a2": {"name": "A2", "size": (420, 594), **_SMALL},
+    "b1": {"name": "B1", "size": (707, 1000), **_MID},
+    "24x36": {"name": "24 x 36 in", "size": (609.6, 914.4), **_MID},
+    "36x48": {"name": "36 x 48 in", "size": (914.4, 1219.2), **_BIG},
+    "42x56": {"name": "42 x 56 in", "size": (1066.8, 1422.4), **_BIG},
+    "46x46": {"name": "46 x 46 in", "size": (1168.4, 1168.4), **_BIG},
+    "36x72": {"name": "36 x 72 in", "size": (914.4, 1828.8), **_BIG},
+    "48x72": {"name": "48 x 72 in", "size": (1219.2, 1828.8), **_HUGE},
+}
+
+# Starting points for New Figure and `fignimble new --poster`: a size the way it is usually hung, and where it is
+# typical. Conferences change their boards from year to year: check the instructions of the one you go to.
+POSTER_TEMPLATES = [
+    {"key": "a0", "poster": "a0", "landscape": False, "name": "A0 portrait",
+     "use": "the usual size at European meetings (ISMB/ECCB recommends it)"},
+    {"key": "48x36", "poster": "36x48", "landscape": True, "name": "48 x 36 in landscape",
+     "use": "the most common size at US meetings"},
+    {"key": "36x48", "poster": "36x48", "landscape": False, "name": "36 x 48 in portrait",
+     "use": "US meetings with portrait boards"},
+    {"key": "72x48", "poster": "48x72", "landscape": True, "name": "72 x 48 in landscape",
+     "use": "a whole 6 x 4 ft board, as at SfN"},
+    {"key": "72x36", "poster": "36x72", "landscape": True, "name": "72 x 36 in landscape",
+     "use": "a wide poster on a 4 x 8 ft board, as ASHG has recommended"},
+    {"key": "46x46", "poster": "46x46", "landscape": False, "name": "46 x 46 in square",
+     "use": "square limits, as at ISMB 2024"},
+    {"key": "42x56", "poster": "42x56", "landscape": False, "name": "42 x 56 in portrait",
+     "use": "large portrait boards"},
+    {"key": "24x36", "poster": "24x36", "landscape": False, "name": "24 x 36 in portrait",
+     "use": "workshops and machine learning meetings (NeurIPS 2024-25)"},
+    {"key": "a1", "poster": "a1", "landscape": False, "name": "A1 portrait", "use": "workshops and smaller meetings"},
+    {"key": "a0-landscape", "poster": "a0", "landscape": True, "name": "A0 landscape",
+     "use": "European meetings with landscape boards"},
+    {"key": "b1", "poster": "b1", "landscape": False, "name": "B1 portrait", "use": "common in Japan"},
+    {"key": "a2", "poster": "a2", "landscape": False, "name": "A2 portrait", "use": "small sessions and retreats"},
+]
+
+
+def _key(name) -> str:
+    return str(name).lower().replace(" ", "").replace("×", "x").replace("in", "")
+
+
+def resolve(name: str) -> tuple[str, bool]:
+    """(preset key, turned) of a poster name: a preset (a0, 36x48), a template (48x36, a0-landscape), or a size
+    written the other way round, which means the poster turned."""
+    k = _key(name)
+    if k in POSTERS:
+        return k, False
+    t = next((t for t in POSTER_TEMPLATES if t["key"] == k), None)
+    if t:
+        return t["poster"], t["landscape"]
+    if "x" in k:
+        a, b = k.split("x", 1)
+        if f"{b}x{a}" in POSTERS:
+            return f"{b}x{a}", True
+    raise ValueError(f"no poster size {name!r}; there are {', '.join(POSTERS)} "
+                     f"(and turned: {', '.join(t['key'] for t in POSTER_TEMPLATES if t['landscape'])})")
+
+
+def poster(name: str) -> dict:
+    """A poster preset by name (see resolve)."""
+    return POSTERS[resolve(name)[0]]
+
+
+def poster_size(name: str, landscape: bool = False) -> tuple[float, float]:
+    """(width, height) mm of a poster; `landscape` turns it (again, for a name that is already turned)."""
+    key, turned = resolve(name)
+    w, h = POSTERS[key]["size"]
+    return (float(h), float(w)) if landscape != turned else (float(w), float(h))

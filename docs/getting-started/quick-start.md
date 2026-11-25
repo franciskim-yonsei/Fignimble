@@ -7,7 +7,7 @@ This walk-through makes a two-panel figure, letters it, styles it for a journal 
 Choose **File ▸ New Project…** (<kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd>), pick a folder name and the journal to style
 for. Fignimble makes the folder with two files and opens it:
 
-- `style.py`: the look every figure of the project shares (font, text size, line widths, panel labels, colours).
+- `style.py`: the look every figure of the project shares (font, text size, line widths, panel labels, colors).
 - `fig1.py`: the first figure, empty, at the journal's double-column width.
 
 A project is just a folder. Put it under git, open it in another editor, or send it to a colleague. New Project
@@ -48,13 +48,13 @@ turn them into a [layout](../guide/layouts.md) whose plot areas line up.
 
 ## 4. Edit what's inside a panel
 
-Click the x-axis label of a panel. The inspector edits that text: retype it, change its size or colour. Fignimble
-changes the string in the panel's code. Click a line and the inspector recolours it.
+Click the x-axis label of a panel. The inspector edits that text: retype it, change its size or color. Fignimble
+changes the string in the panel's code. Click a line and the inspector recolors it.
 
 ## 5. Check and export
 
 The status bar counts preflight warnings; **View ▸ Preflight** (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>P</kbd>) lists them:
-text below the journal's minimum size, pictures below 300 dpi, colours colour-blind readers confuse.
+text below the journal's minimum size, pictures below 300 dpi, colors color-blind readers confuse.
 
 Choose **File ▸ Export Figure…** (<kbd>⌘</kbd><kbd>E</kbd>), pick PDF, EPS, TIFF or another format and the journal,
 and Fignimble writes a file at the resolution the journal asks for. **Edit ▸ Copy Figure as Picture**

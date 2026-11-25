@@ -40,12 +40,7 @@ struct RemoteProject: Equatable {
     static func remember(python: String, for host: String) { UserDefaults.standard.set(python, forKey: "sshPython:" + host) }
 
     /// The folder for the server's shell: quoted, a leading ~ left for it to expand.
-    var shellPath: String {
-        func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        if path == "~" { return "~" }
-        if path.hasPrefix("~/") { return "~/" + q(String(path.dropFirst(2))) }
-        return q(path)
-    }
+    var shellPath: String { SSH.quote(path) }
 }
 
 extension MainController {

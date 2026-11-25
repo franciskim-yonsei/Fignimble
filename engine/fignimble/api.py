@@ -239,13 +239,14 @@ class Style:
     palette   the project's colors: a list, {"WT": "#999999", "KO": "#d1495b"}, or the name of one of fignimble's
               (PALETTES: "okabe-ito", "tol-bright", "tol-muted", "tol-vibrant", "colorbrewer-set2", ...). The
               colors panels plot with in turn, offered as swatches in the editor, and color("KO") in panel code
+    poster    the poster size this style is for (see Style.poster): ticks and padding grow with the text
     """
 
     def __init__(self, font: str = "Arial", size: float = 7, linewidth: float = 0.6, labels: Labels | None = None,
                  despine: bool = True, rc: dict | None = None, min_font: float = 5, min_dpi: float = 300,
-                 journal: str | None = None, align_axes: bool = True, palette=None):
+                 journal: str | None = None, align_axes: bool = True, palette=None, poster: str | None = None):
         self.props = dict(font=font, size=size, linewidth=linewidth, despine=despine, min_font=min_font,
-                          min_dpi=min_dpi, journal=journal, align_axes=align_axes,
+                          min_dpi=min_dpi, journal=journal, align_axes=align_axes, poster=poster,
                           palette=palette if isinstance(palette, str) else
                           (dict(palette) if isinstance(palette, dict) else (list(palette) if palette else None)))
         self.labels = labels or Labels()
@@ -259,6 +260,19 @@ class Style:
         labels = overrides.pop("labels", None) or Labels.journal(name)
         st = cls(**{"font": j["font"], "size": j["font_size"], "min_font": j["min_font"], "journal": name.lower(),
                     "labels": labels, **overrides})
+        st.site = _site()
+        return st
+
+    @classmethod
+    def poster(cls, name: str = "a0", **overrides) -> "Style":
+        """Type sizes for a poster read from a meter or two (see fignimble.journals.POSTERS): body text, the
+        smallest text preflight accepts, line widths and panel letters for that size of poster, with any setting
+        overridden. Pictures are checked against 150 dpi, what a poster is printed at."""
+        key = journals.resolve(name)[0]
+        p = journals.POSTERS[key]
+        labels = overrides.pop("labels", None) or Labels(size=p["labels"], weight="bold", case="lower")
+        st = cls(**{"font": "Arial", "size": p["body"], "linewidth": p["linewidth"], "min_font": p["min_font"],
+                    "min_dpi": journals.POSTER_DPI["photo"], "labels": labels, "poster": key, **overrides})
         st.site = _site()
         return st
 
@@ -287,6 +301,10 @@ class Style:
             "figure.constrained_layout.h_pad": 0.02, "figure.constrained_layout.w_pad": 0.02,
             "savefig.transparent": False,
         }
+        if p.get("poster"):                      # ticks and gaps in proportion to poster-sized text
+            k = size / 7
+            rc.update({"xtick.major.size": 2.5 * k, "ytick.major.size": 2.5 * k, "axes.titlepad": 3 * k,
+                       "axes.labelpad": 2 * k, "xtick.major.pad": 1.5 * k, "ytick.major.pad": 1.5 * k})
         if p["despine"]:
             rc.update({"axes.spines.top": False, "axes.spines.right": False})
         if p["palette"]:
@@ -427,7 +445,7 @@ class Design(Node):
 
 
 class Element:
-    """Something placed on a figure. `kind` is panel, image, text, line, rect, ellipse or bracket."""
+    """Something placed on a figure. `kind` is panel, image, figure, text, table, line, rect, ellipse, bracket, qr, ..."""
 
     def __init__(self, fig: "Figure", kind: str, method: str, props: dict, site):
         self.fig, self.kind, self.method, self.props, self.site = fig, kind, method, props, site
@@ -457,6 +475,20 @@ class Element:
             return (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
         if self.kind in ("zoom", "scalebar"):
             return (0.0, 0.0, 0.0, 0.0)
+        if self.kind == "qr":
+            return (p["x"], p["y"], p["w"], p["w"])
+        if self.kind == "figure":
+            w, h = p["w"], p["h"]
+            if w is None or h is None:
+                from .render import nested_size
+                W, H = nested_size(p["source"])
+                if w is None and h is None:
+                    w, h = W, H
+                elif w is None:
+                    w = h * W / H
+                else:
+                    h = w * H / W
+            return (p["x"], p["y"], w, h)
         if self.kind == "layout":
             return (p["x"], p["y"], p["w"] if p["w"] is not None else self.fig.width - p["x"],
                     p["h"] if p["h"] is not None else self.fig.height - p["y"])
@@ -480,23 +512,42 @@ class Element:
 
 
 class Figure:
-    """A figure: its size (mm), its style, and the elements placed on it.
+    """A figure (or a poster): its size (mm), its style, and the elements placed on it.
 
     width, height  in mm. With `journal` (and `columns`) and no width, the journal's column width.
     style          a Style shared by every panel (font, sizes, labels); `labels` overrides its Labels
     background     page color ("#FFFFFF"), or None for transparent
+    poster         a poster size ("a0", "a1", "b1", "24x36", "36x48", "48x36" (turned), "72x48", ...; see
+                   fignimble.journals.POSTERS and POSTER_TEMPLATES):
+                   the figure is that size (`landscape=True` turns it), its style is Style.poster(poster) unless
+                   one is given, and preflight keeps `margin` mm along the edges clear (the preset's by default)
     """
 
-    def __init__(self, width: float | None = None, height: float = 120, style: Style | None = None,
+    def __init__(self, width: float | None = None, height: float | None = None, style: Style | None = None,
                  labels: Labels | None = None, background: str | None = "#FFFFFF", journal: str | None = None,
-                 columns="double"):
+                 columns="double", poster: str | None = None, landscape: bool = False, margin: float | None = None):
+        if poster:
+            key, turned = journals.resolve(poster)          # "48x36" is the 36 x 48 in poster turned
+            landscape = landscape != turned
+            poster = key
+            pw, ph = journals.poster_size(key, landscape)
+            width = pw if width is None else width
+            height = ph if height is None else height
+            if style is None:
+                style = Style.poster(poster)
+                style.site = None
+            if margin is None:
+                margin = journals.poster(poster)["margin"]
         if width is None:
             width = journals.width(journal, columns) if journal else 183.0
+        if height is None:
+            height = 120.0
         if style is None:
             style = Style.journal(journal) if journal else Style()
             style.site = None                       # made here, not in the user's code
         self.props = dict(width=width, height=height, background=background, journal=journal or style.journal,
-                          columns=columns)
+                          columns=columns, poster=poster.lower() if poster else None, landscape=landscape,
+                          margin=margin)
         self.style = style
         self.labels = labels or style.labels
         self.elements: list[Element] = []
@@ -565,18 +616,47 @@ class Figure:
                                                 rotation=rotation, flip=flip,
                                                 group=group, name=name, locked=locked, hidden=hidden))
 
+    def figure(self, source: str, x: float = 0, y: float = 0, w: float | None = None, h: float | None = None,
+               style: Style | None = None, letters: bool = True, background="figure", label=None,
+               label_dx: float | None = None, label_dy: float | None = None, label_x: float | None = None,
+               label_y: float | None = None, group: str | None = None, name: str | None = None,
+               locked: bool = False, hidden: bool = False) -> Element:
+        """Another figure of the project, placed whole: `source` is its figure file ("fig2.py"). It is drawn from
+        its code every time, so it is always the figure as it is now, with its panels, letters and annotations.
+
+        Without `w` and `h` it is placed at its own size; with `w` (or `h`) it is scaled to that width (height),
+        text and lines with it, keeping its proportions (with both, it fits inside w x h). `style` draws it with
+        another Style (a poster's font, say) instead of its own; `letters=False` leaves out its panel letters;
+        `background` is its own page color ("figure"), another color, or None (transparent). `label` "auto"
+        letters it as a panel of this figure; None (the default): no letter."""
+        e = self._add("figure", "figure", dict(source=str(source), x=x, y=y, w=w, h=h, letters=letters,
+                                                background=background, label=label, label_dx=label_dx,
+                                                label_dy=label_dy, label_x=label_x, label_y=label_y, group=group,
+                                                name=name, locked=locked, hidden=hidden))
+        e.substyle = style
+        return e
+
     # --- annotations ---
 
-    def text(self, text: str, x: float = 0, y: float = 0, size: float | None = None, weight: str = "normal",
+    def text(self, text: str = "", x: float = 0, y: float = 0, size: float | None = None, weight: str = "normal",
              style: str = "normal", color: str = "#000000", align: str = "left", rotation: float = 0,
-             font: str | None = None, width: float | None = None, opacity: float = 1.0, group: str | None = None, name: str | None = None, locked: bool = False, hidden: bool = False) -> Element:
+             font: str | None = None, width: float | None = None, opacity: float = 1.0, source: str | None = None,
+             height: float | None = None, fit: str | None = None, group: str | None = None, name: str | None = None,
+             locked: bool = False, hidden: bool = False) -> Element:
         """Text. (x, y) is the top-left of the text (top-center or top-right with align "center" / "right").
         Size in pt; default the style's size. `width` (mm) makes it a text box whose lines wrap.
         Markup: **bold**, *italic*, ^{superscript}, _{subscript} (in the style's font), and matplotlib's math:
-        "$\\alpha$-actin". A line break is "\\n"."""
+        "$\\alpha$-actin". A line break is "\\n".
+
+        In a text box (`width`), lines that start with "- " or "• " are bullets, "1. " numbered items and "# " or
+        "## " headings, with their lines indented under them; an empty line starts a paragraph.
+        `source` takes the text from a file of the project instead (a .md or .txt, written as Markdown: lines of a
+        paragraph join, "- " and "* " are bullets). `height` (mm) is the box's height: preflight says when the text
+        doesn't fit, and fit="shrink" makes the type smaller until it does (never below the style's minimum)."""
         return self._add("text", "text", dict(text=str(text), x=x, y=y, size=size, weight=weight, style=style,
                                               color=color, align=align, rotation=rotation, font=font, width=width,
-                                              opacity=opacity,
+                                              opacity=opacity, source=None if source is None else str(source),
+                                              height=height, fit=fit,
                                               group=group,
                                               name=name, locked=locked, hidden=hidden))
 
@@ -661,6 +741,16 @@ class Figure:
                                               smooth=smooth, stroke=stroke, fill=fill, width=width, dash=dash,
                                               arrow=arrow, tip=tip, head=head, opacity=opacity, group=group,
                                               name=name, locked=locked, hidden=hidden))
+
+    def qr(self, data: str, x: float = 0, y: float = 0, w: float = 30, color: str = "#000000",
+           background: str | None = "#FFFFFF", level: str = "M", quiet: int = 4, group: str | None = None,
+           name: str | None = None, locked: bool = False, hidden: bool = False) -> Element:
+        """A QR code for `data` (a link, usually), `w` mm square including its `quiet` border of light modules
+        (4, as the standard asks; scanners need it). `level` is how much of it can be damaged and still read:
+        "L" 7%, "M" 15%, "Q" 25%, "H" 30% (more makes a denser code). It stays dark on light in dark versions."""
+        return self._add("qr", "qr", dict(data=str(data), x=x, y=y, w=w, color=color, background=background,
+                                          level=level, quiet=quiet, group=group, name=name, locked=locked,
+                                          hidden=hidden))
 
     def zoom(self, source, target, region: tuple = (0.35, 0.35, 0.25, 0.25), color: str = "#000000",
              width: float = 0.5, dash: str | None = None, lines: bool = True, sync: bool = True,

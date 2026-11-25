@@ -15,8 +15,9 @@ project in LOCAL_FOLDER, which this keeps in step both ways:
   the conflicts folder beside the mirror;
 - pictures to place and exports go across as files: uploaded to the server, and fetched to where the app asked.
 
-ssh runs without asking for a password (BatchMode): the server must take a key, an agent's key, or a ControlMaster
-connection opened in a terminal. FIGNIMBLE_SSH replaces the ssh command (the tests use a stand-in).
+ssh runs without asking anything (BatchMode): the app logs in first and leaves a shared connection open
+(remote.ssh_command), or the server takes a key. When the connection drops this exits (status 3), so the app can say
+so at once. FIGNIMBLE_SSH replaces the ssh command (the tests use a stand-in).
 """
 
 from __future__ import annotations
@@ -46,7 +47,13 @@ READ_ONLY = {"state", "figure", "journals", "requirements", "copy", "export", "e
              "remote_list", "manifest", "read_files"}
 BATCH = 16 * 1024 * 1024                         # bytes of files fetched per request
 NEEDS_ENGINE, NEEDS_PACKAGES = 97, 98
+CONNECTION_LOST = 3                              # the exit status when the server went away
 READY = "fignimble-remote-ready"
+MISSING = "fignimble-missing"
+# run by the server's Python: what the engine needs that it lacks (Python 3.6 syntax, so old ones can say so)
+CHECK = ('import sys, importlib.util as u; m = [n for n in ("matplotlib", "pymupdf", "PIL") if u.find_spec(n) is None]'
+         ' + (["Python 3.10"] if sys.version_info < (3, 10) else []); m and print("' + MISSING + ' " + " ".join(m));'
+         ' sys.exit(1 if m else 0)')
 
 
 def log(*a):
@@ -76,8 +83,8 @@ def engine_tarball() -> bytes:
 
 def ssh_args(host: str, script: str) -> list[str]:
     """ssh running a POSIX shell script on `host` (whatever the login shell there is)."""
-    return (remote._ssh() + remote.OPTIONS + ["-T", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
-                                               "-o", "Compression=yes", host, "--", "sh -c " + shlex.quote(script)])
+    return (remote.ssh_command() + ["-T", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
+                                    "-o", "Compression=yes", host, "--", "sh -c " + shlex.quote(script)])
 
 
 def _map(v, a: str, b: str):
@@ -122,6 +129,9 @@ class Tunnel:
         self.outbox: queue.Queue = queue.Queue()
         self.n = 0
         self.alive = True
+        self.closing = False                        # the app ended the session (so the server going is expected)
+        self.needs: dict | None = None              # what the server's Python lacks, when that stopped the start
+        self.deliverer: threading.Thread | None = None
         self.remote_size: dict[str, int] = {}       # relative path -> size on the server, from the last manifest
 
     # --- starting the engine on the server ---
@@ -130,7 +140,7 @@ class Tunnel:
         d = f'"$HOME/.cache/fignimble/engine/{version}"'
         py = remote._quote(self.python)
         return (f'D={d}; [ -f "$D/.ok" ] || exit {NEEDS_ENGINE}; '
-                f"{py} -c 'import matplotlib, pymupdf, PIL' || exit {NEEDS_PACKAGES}; "
+                f"{py} -c {shlex.quote(CHECK)} || exit {NEEDS_PACKAGES}; "
                 f"echo '{{\"event\": \"{READY}\"}}'; "
                 f'cd "$D" && FIGNIMBLE_REMOTE=1 MPLBACKEND=Agg PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 '
                 f'PYTHONPATH="$D" exec {py} -u -m fignimble.rpc')
@@ -163,13 +173,23 @@ class Tunnel:
                 self.install_engine(version)
                 continue
             if code == NEEDS_PACKAGES:
-                raise TunnelError(f"{self.python} on {self.host} can't import matplotlib, pymupdf and PIL. Install "
-                                  f"them there ({self.python} -m pip install matplotlib pymupdf pillow numpy), or "
-                                  "choose the Python of an environment that has them (Python 3.10 or newer).")
+                said = first.decode(errors="replace").strip()
+                if not said.startswith(MISSING):
+                    raise TunnelError(f"couldn't run {self.python} on {self.host}; its message is above. Choose the "
+                                      "path of a Python there (3.10 or newer).")
+                missing = said.split()[1:]
+                pip = [{"PIL": "pillow"}.get(n, n) for n in missing if n != "Python 3.10"]
+                self.needs = {"host": self.host, "python": self.python, "missing": missing,
+                              "pip": [] if "Python 3.10" in missing else pip}
+                if "Python 3.10" in missing:
+                    raise TunnelError(f"{self.python} on {self.host} is older than Python 3.10. Choose the Python of "
+                                      "a newer environment there.")
+                raise TunnelError(f"{self.python} on {self.host} doesn't have {', '.join(pip)}. Install "
+                                  f"{'it' if len(pip) == 1 else 'them'} there ({self.python} -m pip install "
+                                  f"{' '.join(pip)}), or choose the Python of an environment that has the engine's "
+                                  "packages (matplotlib, pymupdf and pillow).")
             if code == 255:
-                raise TunnelError(f"ssh couldn't connect to {self.host}. Fignimble can't type a password: add your "
-                                  "key to the server with ssh-copy-id, use an ssh-agent, or log in once in a terminal "
-                                  "with ControlMaster set in ~/.ssh/config.")
+                raise TunnelError(f"ssh couldn't connect to {self.host}; its message is above.")
             raise TunnelError(f"the engine on {self.host} didn't start (exit status {code}); its messages are above")
         raise TunnelError("the engine didn't start")
 
@@ -229,6 +249,14 @@ class Tunnel:
         for fut in waiting.values():
             fut.set_result({"error": f"the connection to {self.host} closed"})
         self.outbox.put(None)
+        if not self.closing:
+            # the server went away (the network, a sleeping Mac, the server restarting): say so now rather than at
+            # the app's next request. Edits not sent yet stay in the mirror and go across when it reconnects
+            code = self.proc.wait()
+            log(f"the connection to {self.host} closed (ssh exit status {code})")
+            if self.deliverer:
+                self.deliverer.join(timeout=10)
+            os._exit(CONNECTION_LOST)
 
     def write_pictures(self, files: dict):
         for path, data in files.items():
@@ -426,7 +454,7 @@ class Tunnel:
                         return
                     host, path = where
                 try:
-                    data = remote._run(remote._ssh() + remote.OPTIONS + [host, "--", f"cat -- {remote._quote(path)}"],
+                    data = remote._run(remote.ssh_command() + [host, "--", f"cat -- {remote._quote(path)}"],
                                        timeout=120)
                 except remote.RemoteError as exc:
                     self.emit({"id": mid, "result": {"ok": False, "error": f"couldn't fetch {host}:{path}: {exc}"}})
@@ -440,11 +468,19 @@ class Tunnel:
         try:
             self.start()
         except TunnelError as exc:
+            # answered to the app's requests (its `open`) until it closes this, with what the Python lacks first
             log(exc)
-            print(f"\n{exc}", file=sys.stderr, flush=True)
+            if self.needs:
+                self.emit({"event": "needs_packages", **self.needs})
+            for line in sys.stdin:
+                try:
+                    req = json.loads(line)
+                except ValueError:
+                    continue
+                self.emit({"id": req.get("id"), "error": str(exc)})
             return 1
+        self.deliverer = deliverer = threading.Thread(target=self.deliver, daemon=True)
         threading.Thread(target=self.read_server, daemon=True).start()
-        deliverer = threading.Thread(target=self.deliver, daemon=True)
         deliverer.start()
         threading.Thread(target=self.poll, daemon=True).start()
         for line in sys.stdin:
@@ -459,6 +495,7 @@ class Tunnel:
                 self.emit({"id": req.get("id"), "error": str(exc)})
             if not self.alive:
                 break
+        self.closing = True
         try:                                            # the app is done: last edits across, then the engine ends
             self.push()
         except Exception as exc:                      # noqa: BLE001

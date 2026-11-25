@@ -271,6 +271,7 @@ final class Inspector: NSView {
         guard let m = main else { return }
         section("Figure · \(f.name)")
         pageSizeRow(f)
+        if let p = f.poster { posterSection(f, p) }
         // a journal's widths, the journals by publisher
         let widthMenu = NSPopUpButton(frame: .zero, pullsDown: true)
         widthMenu.controlSize = .small; widthMenu.font = Theme.font(11)
@@ -285,7 +286,7 @@ final class Inspector: NSView {
             }
         }
         widthMenu.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        add(widthMenu)
+        if f.poster == nil { add(widthMenu) }
         row([("Background", color(f.background ?? "#FFFFFF") { m.edit(["op": "figure", "props": ["background": $0]]) })])
         add(check("Transparent background", f.background == nil) { on in m.edit(["op": "figure", "props": ["background": on ? (NSNull() as Any) : "#FFFFFF"]]) })
 
@@ -320,6 +321,29 @@ final class Inspector: NSView {
         })])
         note("Panels draw with this font and these sizes, so they match, and plot in the palette's colors in turn (color(\"KO\") in panel code). A palette is #RRGGBB, …, or name=#RRGGBB, …. A style in style.py is shared by every figure that imports it.")
         labelSection(f)
+    }
+
+    /// A text box's height and whether its type shrinks to fit it.
+    private func textBoxRows(_ f: FigureData, _ e: Element, _ setp: @escaping ([String: Any]) -> Void) {
+        row([("Box height", numberField(e.p("height"), width: 44) { setp(["height": $0 <= 0 ? (NSNull() as Any) : $0]) }), ("mm (empty: as tall as its text)", NSView())])
+        add(check("Shrink the type to fit the box", e.s("fit") == "shrink") { setp(["fit": $0 ? "shrink" : (NSNull() as Any)]) })
+        if let o = e.overflow { note("Runs \(mm(o)) mm past its box.") }
+        if let s = e.shrunk { note("Shrunk to \(mm(s)) pt to fit.") }
+    }
+
+    /// A poster's size: its preset, turned, and the margin preflight keeps clear along the edges.
+    private func posterSection(_ f: FigureData, _ p: [String: Any]) {
+        guard let m = main else { return }
+        section("Poster")
+        let keys = m.posters.sorted { num($0.value["rank"]) < num($1.value["rank"]) }.map(\.key)
+        let names = keys.map { k in m.posters[k]?["name"] as? String ?? k }
+        let cur = (p["key"] as? String).flatMap { k in keys.firstIndex(of: k) }.map { names[$0] }
+        row([("Size", popup(names, cur, width: 110) { i, _ in
+                m.edit(["op": "figure", "props": ["poster": keys[i], "width": NSNull(), "height": NSNull()]]) }),
+             ("", check("Landscape", p["landscape"] as? Bool ?? false) { on in
+                m.edit(["op": "figure", "props": ["poster": p["key"] ?? "a0", "landscape": on, "width": NSNull(), "height": NSNull()]]) })])
+        row([("Margin", numberField(num(p["margin"]), width: 40) { m.edit(["op": "figure", "props": ["margin": $0]]) }), ("mm kept clear along the edges", NSView())])
+        note("Text at least \(mm(num(p["minFont"]))) pt as printed, figures placed on it included. Export as PDF with a bleed and crop marks for a print shop, or as PowerPoint on a slide the poster's size.")
     }
 
     /// The page's width and height, in the units picked (mm, cm, in, ft; the code keeps millimeters).
@@ -385,10 +409,13 @@ final class Inspector: NSView {
         case "path", "zoom", "scalebar", "legend":
             let b = e.box
             note("At \(mm(Double(b.minX))), \(mm(Double(b.minY))) mm, \(mm(Double(b.width))) × \(mm(Double(b.height))) mm.")
+        case "qr":
+            row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
+            row([("Size", numberField(e.p("w"), set("w"))), ("mm square, with its border", NSView())])
         default:
             row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
-            let hAuto = e.kind == "image" && e.props["h"] is NSNull
-            row([("W", numberField(e.p("w"), set("w"))), ("H", numberField(hAuto ? Double(e.box.height) : e.p("h"), set("h"))), ("mm", NSView())])
+            let hAuto = (e.kind == "image" || e.kind == "figure") && e.props["h"] is NSNull
+            row([("W", numberField(e.p("w") ?? Double(e.box.width), set("w"))), ("H", numberField(hAuto ? Double(e.box.height) : e.p("h"), set("h"))), ("mm", NSView())])
             if e.kind == "image" {
                 add(check("Keep the picture's proportions", hAuto) { on in
                     m.edit(["op": "set", "oid": e.oid, "props": ["h": on ? (NSNull() as Any) : Double(e.box.height)]]) })
@@ -494,6 +521,29 @@ final class Inspector: NSView {
                  ("", button("Zoom Box", symbol: "plus.magnifyingglass") { m.addZoom(nil) })])
             panelLabelRows(f, e)
             if let path = e.codeFile, let icon = Inspector.bioCartoonOrigin(path) { bioCartoonSection(icon) }
+        case "figure":
+            section("Figure placed whole")
+            let src = e.s("source") ?? ""
+            note(src + (e.scale.map { $0 == 1 ? "  ·  its own size" : "  ·  scaled \(mm($0 * 100))%" } ?? ""))
+            row([("", button("Open Figure", symbol: "arrow.up.forward.square") { if let n = e.figureName { m.show(figure: n) } }),
+                 ("", button("Own Size", symbol: "arrow.down.right.and.arrow.up.left") { setp(["w": NSNull(), "h": NSNull()]) })])
+            add(check("Its panel letters", e.props["letters"] as? Bool ?? true) { setp(["letters": $0]) })
+            add(check("Transparent background", e.props["background"] is NSNull) { on in setp(["background": on ? (NSNull() as Any) : "figure"]) })
+            note("Drawn from \(src)'s code every time: change that figure (Open Figure, or double-click) and it changes here. Scaling scales its text and lines; preflight checks them at the size they print.")
+            panelLabelRows(f, e)
+        case "qr":
+            section("QR code")
+            add(Field(e.s("data") ?? "", width: 220) { setp(["data": $0]) })
+            row([("Error correction", popup(["L (7%)", "M (15%)", "Q (25%)", "H (30%)"], ["L": "L (7%)", "M": "M (15%)", "Q": "Q (25%)", "H": "H (30%)"][e.s("level") ?? "M"], width: 90) { i, _ in
+                setp(["level": ["L", "M", "Q", "H"][i]]) })])
+            row([("Color", color(e.s("color") ?? "#000000") { setp(["color": $0]) }),
+                 ("On", color(e.s("background") ?? "#FFFFFF") { setp(["background": $0]) })])
+            note("A link (or any text) for phones to read. Keep it dark on light, and on a poster 3 cm or larger; a longer link makes smaller squares.")
+        case "text" where e.s("source") != nil:
+            section("Text from a file")
+            note((e.s("source") ?? "") + "  ·  written as Markdown: # headings, - bullets, 1. numbered, an empty line between paragraphs")
+            row([("", button("Edit Text", symbol: "doc.text") { m.showCode(of: e) })])
+            textBoxRows(f, e, setp)
         case "text":
             section("Text")
             add(Field(e.s("text") ?? "", width: 220) { setp(["text": $0]) })
@@ -510,7 +560,8 @@ final class Inspector: NSView {
                  ("Rotate", numberField(e.p("rotation") ?? 0, width: 36) { setp(["rotation": $0]) }), ("°", NSView())])
             row([("Wrap at", numberField(e.p("width"), width: 44) { setp(["width": $0 <= 0 ? (NSNull() as Any) : $0]) }), ("mm (empty: one line)", NSView())])
             row([("Opacity", numberField((e.p("opacity") ?? 1) * 100, width: 40) { setp(["opacity": max(0, min(1, $0 / 100))]) }), ("%", NSView())])
-            note("**bold**, *italic*, ^{superscript}, _{subscript}, and math: $\\alpha$. Double-click the text to retype it; drag its side handles to set where it wraps.")
+            if e.p("width") != nil { textBoxRows(f, e, setp) }
+            note("**bold**, *italic*, ^{superscript}, _{subscript}, and math: $\\alpha$. In a text box, lines starting with - are bullets, 1. numbered, # headings. Double-click the text to retype it; drag its side handles to set where it wraps.")
         case "line":
             section("Line")
             strokeRows(e, setp, fill: false)

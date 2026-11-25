@@ -118,3 +118,20 @@
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: 0.2rem;
 }
+
+/* Buttons in dark mode: Material colours them with the header's near-black, which vanishes on the dark page. */
+[data-md-color-scheme="slate"] .md-typeset .md-button {
+  color: #5fd3e0;
+  border-color: #5fd3e0;
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button--primary {
+  color: #0d1f22;
+  background-color: #35c3d3;
+  border-color: #35c3d3;
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button:hover,
+[data-md-color-scheme="slate"] .md-typeset .md-button:focus {
+  color: #0d1f22;
+  background-color: #7fe0ea;
+  border-color: #7fe0ea;
+}

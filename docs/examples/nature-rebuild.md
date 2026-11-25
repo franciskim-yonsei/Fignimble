@@ -64,7 +64,7 @@ in about ten seconds.
 Of the 34 data panels, **18 reproduced from the authors' code as it is**, apart from moving it into panel
 functions. **7 needed a small fix**: cells that read variables left over from earlier cells, a unit conversion, and
 cells without a measurement left out. **5 had no plotting code** in the repository and were drawn the same way as
-their neighbours. **1 crashed** in the notebook. **3 differ** from the published figure, because of problems in the
+their neighbors. **1 crashed** in the notebook. **3 differ** from the published figure, because of problems in the
 published version. The number of cells in each group matches the caption for every panel we checked (a, k–w, y and
 aa–aj).
 

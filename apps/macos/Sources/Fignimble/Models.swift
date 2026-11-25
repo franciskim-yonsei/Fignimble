@@ -85,6 +85,12 @@ final class Element {
     let locked: Bool
     let points: [CGPoint]     // a path's
     let sourceBox: CGRect?    // a zoom's source picture
+    /// A figure placed whole (fig.figure): the figure it is (when it is one of the project's), and its scale.
+    let figureName: String?
+    let scale: Double?
+    /// A text box's height it runs past (mm), and the size it was shrunk to fit (pt).
+    let overflow: Double?
+    let shrunk: Double?
     /// A table's columns (x, width) and rows (y, height), mm from its top-left corner: where each cell is.
     let gridCols: [(Double, Double)]
     let gridRows: [(Double, Double)]
@@ -132,6 +138,10 @@ final class Element {
         locked = d["locked"] as? Bool ?? false
         points = ((d["props"] as? [String: Any])?["points"] as? [[Any]] ?? []).map { CGPoint(x: num($0.first), y: num($0.count > 1 ? $0[1] : 0)) }
         sourceBox = Element.rect(d["sourceBox"])
+        figureName = d["figure"] as? String
+        scale = (d["scale"] as? NSNumber)?.doubleValue
+        overflow = (d["overflow"] as? NSNumber)?.doubleValue
+        shrunk = (d["shrunk"] as? NSNumber)?.doubleValue
         let g = d["grid"] as? [String: Any]
         gridCols = (g?["cols"] as? [[Any]] ?? []).map { (num($0.first), num($0.count > 1 ? $0[1] : 0)) }
         gridRows = (g?["rows"] as? [[Any]] ?? []).map { (num($0.first), num($0.count > 1 ? $0[1] : 0)) }
@@ -184,7 +194,9 @@ final class Element {
             let fn = s("function").flatMap { $0 == "draw" ? nil : ":" + $0 } ?? ""
             return (label.map { "\($0)  " } ?? "") + src.lastPathComponent + fn
         case "image": return (label.map { "\($0)  " } ?? "") + ((s("source") ?? "picture") as NSString).lastPathComponent
-        case "text": return "“" + (s("text") ?? "") + "”"
+        case "text": return s("source").map { "Text from " + ($0 as NSString).lastPathComponent } ?? "“" + (s("text") ?? "") + "”"
+        case "figure": return (label.map { "\($0)  " } ?? "") + "Figure " + ((s("source") ?? "") as NSString).deletingPathExtension
+        case "qr": return "QR code"
         case "line": return s("arrow") == nil ? "Line" : "Arrow"
         case "rect": return "Rectangle"
         case "ellipse": return "Ellipse"
@@ -216,6 +228,8 @@ final class Element {
         case "path": return "scribble"
         case "zoom": return "plus.magnifyingglass"
         case "scalebar": return "ruler"
+        case "figure": return "rectangle.on.rectangle"
+        case "qr": return "qrcode"
         default: return "tag"
         }
     }
@@ -246,6 +260,8 @@ final class FigureData {
     let style: [String: Any]
     let figureProps: [String: Any]
     let journal: [String: Any]?
+    /// A poster's preset (Figure(poster=...)): key, name, landscape, margin (mm), minFont.
+    let poster: [String: Any]?
     let error: String?
     let pxPerMM: Double
     let background: String?
@@ -274,6 +290,7 @@ final class FigureData {
         style = (d["style"] as? [String: Any])?["props"] as? [String: Any] ?? [:]
         figureProps = d["figureProps"] as? [String: Any] ?? [:]
         journal = d["journal"] as? [String: Any]
+        poster = d["poster"] as? [String: Any]
         error = d["error"] as? String
         pxPerMM = (d["pxPerMM"] as? NSNumber)?.doubleValue ?? 12
         background = d["background"] as? String

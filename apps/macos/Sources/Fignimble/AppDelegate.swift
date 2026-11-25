@@ -7,6 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var launchURL: URL?
 
     static func main() {
+        // run by ssh as its SSH_ASKPASS program: one question in a dialog, then exit (SSHLogin.swift)
+        if ProcessInfo.processInfo.environment["FIGNIMBLE_ASKPASS"] != nil { SSH.askpassMain() }
         let app = NSApplication.shared
         let d = AppDelegate()
         app.delegate = d
@@ -89,6 +91,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     func applicationWillTerminate(_ n: Notification) { controller.finish() }
 
+    /// The About panel: name, version (from the bundle), license and authors (as Manimble's).
+    @objc func showAbout(_ sender: Any?) {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "X.Y.Z"
+        let para = NSMutableParagraphStyle(); para.alignment = .center
+        let credits = NSAttributedString(
+            string: "License: BSD-2\nDeveloped by Joseph Rich and Lior Pachter. 2026",
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                         .foregroundColor: NSColor.labelColor, .paragraphStyle: para])
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Fignimble",
+            .applicationVersion: version,
+            .version: "",                                   // no "(build)" suffix
+            .credits: credits,
+            NSApplication.AboutPanelOptionKey(rawValue: "Copyright"): "",
+        ])
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     // MARK: menus
 
     private func buildMenu() {
@@ -110,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let sep = { NSMenuItem.separator() }
 
-        menu("Fignimble", [item("About Fignimble", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), to: NSApp), sep(),
+        menu("Fignimble", [item("About Fignimble", #selector(showAbout(_:)), to: self), sep(),
                         item("Install Command Line Tool…", #selector(MainController.installCommandLineTool(_:))),
                         item("Check Packages…", #selector(MainController.checkPackagesNow(_:))), sep(),
                         item("Hide Fignimble", #selector(NSApplication.hide(_:)), "h", to: NSApp),
@@ -140,6 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu("Insert", [item("New Panel from Code…", #selector(MainController.newPanel(_:)), "p", [.command, .shift]),
                         item("Panel from Existing Code…", #selector(MainController.insertPanelCode(_:))),
                         item("Picture…", #selector(MainController.insertImage(_:)), "i", [.command, .shift]),
+                        item("Figure…", #selector(MainController.insertFigure(_:))),
+                        item("QR Code…", #selector(MainController.insertQR(_:))),
                         item("BioCartoon Icons…", #selector(MainController.showBioCartoon(_:)), "b", [.command, .shift]),
                         item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
                         item("Table from CSV…", #selector(MainController.insertTable(_:))),

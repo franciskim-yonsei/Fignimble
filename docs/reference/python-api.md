@@ -1,25 +1,28 @@
 # Python API
 
-Everything a figure file uses comes from `from fignimble import *`. Sizes and positions are in millimetres from the
+Everything a figure file uses comes from `from fignimble import *`. Sizes and positions are in millimeters from the
 figure's top-left corner, y down; text sizes in points. This page is generated from the docstrings in
 [`engine/fignimble/api.py`](https://github.com/pachterlab/Fignimble/blob/main/engine/fignimble/api.py).
 
 ## Figure
 
 ```python
-Figure(width: 'float | None' = None, height: 'float' = 120, style: 'Style | None' = None, labels: 'Labels | None' = None, background: 'str | None' = '#FFFFFF', journal: 'str | None' = None, columns='double')
+Figure(width: 'float | None' = None, height: 'float | None' = None, style: 'Style | None' = None, labels: 'Labels | None' = None, background: 'str | None' = '#FFFFFF', journal: 'str | None' = None, columns='double', poster: 'str | None' = None, landscape: 'bool' = False, margin: 'float | None' = None)
 ```
 
-A figure: its size (mm), its style, and the elements placed on it.
+A figure (or a poster): its size (mm), its style, and the elements placed on it.
 
 width, height  in mm. With `journal` (and `columns`) and no width, the journal's column width.
 style          a Style shared by every panel (font, sizes, labels); `labels` overrides its Labels
-background     page colour ("#FFFFFF"), or None for transparent
+background     page color ("#FFFFFF"), or None for transparent
+poster         a poster size ("a0", "a1", "a2", "36x48", "42x56", "24x36"; see fignimble.journals.POSTERS):
+               the figure is that size (`landscape=True` turns it), its style is Style.poster(poster) unless
+               one is given, and preflight keeps `margin` mm along the edges clear (the preset's by default)
 
 ### fig.panel
 
 ```python
-fig.panel(source, x: 'float' = 0, y: 'float' = 0, w: 'float' = 80, h: 'float' = 60, function: 'str' = 'draw', args: 'dict | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, texts: 'dict | None' = None, colors: 'dict | None' = None, rotation: 'float' = 0, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False, text_style: 'dict | None' = None) -> 'Element'
+fig.panel(source, x: 'float' = 0, y: 'float' = 0, w: 'float' = 80, h: 'float' = 60, function: 'str' = 'draw', args: 'dict | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, texts: 'dict | None' = None, colors: 'dict | None' = None, rotation: 'float' = 0, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False, text_style: 'dict | None' = None) -> 'Element'
 ```
 
 A panel drawn by Python code. `source` is a .py file (path relative to the project) whose `function`
@@ -31,17 +34,18 @@ A panel drawn by Python code. `source` is a .py file (path relative to the proje
 
 `args` are passed to it as keyword arguments, so one panel file can draw several panels. Resizing the
 panel redraws it at the new size, so its text keeps its size. `label` is "auto" (the next letter), a
-string of your own ("a'"), or None (no label); `label_dx`/`label_dy` move this panel's label only.
+string of your own ("a'"), or None (no label); `label_dx`/`label_dy` move this panel's label only, and
+`label_x`/`label_y` (mm, on the figure) unhook it: it stays there when the panel moves.
 `texts` replaces texts the code draws ({"ax0.xlabel": "Time (min)", "ax0.xtick2": "10³"}), which is how
-the editor retypes a text the code doesn't hold as a literal; `text_style` sets such a text's size, colour,
+the editor retypes a text the code doesn't hold as a literal; `text_style` sets such a text's size, color,
 weight and slant ({"ax0.legend1": {"size": 8, "color": "#D55E00", "weight": "bold", "style": "italic"}});
-`colors` likewise recolours lines, bars and points ({"ax0.line1": "#0072B2"}); `rotation` turns the panel
+`colors` likewise recolors lines, bars and points ({"ax0.line1": "#0072B2"}); `rotation` turns the panel
 (90, 180, 270).
 
 ### fig.image
 
 ```python
-fig.image(source: 'str', x: 'float' = 0, y: 'float' = 0, w: 'float' = 60, h: 'float | None' = None, fit: 'str' = 'contain', crop: 'tuple | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, opacity: 'float' = 1.0, rotation: 'float' = 0, flip: 'str | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+fig.image(source: 'str', x: 'float' = 0, y: 'float' = 0, w: 'float' = 60, h: 'float | None' = None, fit: 'str' = 'contain', crop: 'tuple | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, opacity: 'float' = 1.0, rotation: 'float' = 0, flip: 'str | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
 A picture as a panel: PNG, JPEG, TIFF (raster) or PDF, SVG (vector, kept as vector). Without `h`, the
@@ -50,29 +54,51 @@ cropping) or "stretch". `crop` = (left, top, right, bottom), fractions 0-1 of th
 `rotation` turns it (degrees counterclockwise; any angle for PNG/TIFF/JPEG, multiples of 90 for PDF/SVG) and
 `flip` mirrors it ("h" or "v").
 
+### fig.figure
+
+```python
+fig.figure(source: 'str', x: 'float' = 0, y: 'float' = 0, w: 'float | None' = None, h: 'float | None' = None, style: 'Style | None' = None, letters: 'bool' = True, background='figure', label=None, label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+```
+
+Another figure of the project, placed whole: `source` is its figure file ("fig2.py"). It is drawn from
+its code every time, so it is always the figure as it is now, with its panels, letters and annotations.
+
+Without `w` and `h` it is placed at its own size; with `w` (or `h`) it is scaled to that width (height),
+text and lines with it, keeping its proportions (with both, it fits inside w x h). `style` draws it with
+another Style (a poster's font, say) instead of its own; `letters=False` leaves out its panel letters;
+`background` is its own page color ("figure"), another color, or None (transparent). `label` "auto"
+letters it as a panel of this figure; None (the default): no letter.
+
 ### fig.text
 
 ```python
-fig.text(text: 'str', x: 'float' = 0, y: 'float' = 0, size: 'float | None' = None, weight: 'str' = 'normal', style: 'str' = 'normal', color: 'str' = '#000000', align: 'str' = 'left', rotation: 'float' = 0, font: 'str | None' = None, width: 'float | None' = None, opacity: 'float' = 1.0, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+fig.text(text: 'str' = '', x: 'float' = 0, y: 'float' = 0, size: 'float | None' = None, weight: 'str' = 'normal', style: 'str' = 'normal', color: 'str' = '#000000', align: 'str' = 'left', rotation: 'float' = 0, font: 'str | None' = None, width: 'float | None' = None, opacity: 'float' = 1.0, source: 'str | None' = None, height: 'float | None' = None, fit: 'str | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
-Text. (x, y) is the top-left of the text (top-centre or top-right with align "center" / "right").
+Text. (x, y) is the top-left of the text (top-center or top-right with align "center" / "right").
 Size in pt; default the style's size. `width` (mm) makes it a text box whose lines wrap.
 Markup: **bold**, *italic*, ^{superscript}, _{subscript} (in the style's font), and matplotlib's math:
 "$\alpha$-actin". A line break is "\n".
 
+In a text box (`width`), lines that start with "- " or "• " are bullets, "1. " numbered items and "# " or
+"## " headings, with their lines indented under them; an empty line starts a paragraph.
+`source` takes the text from a file of the project instead (a .md or .txt, written as Markdown: lines of a
+paragraph join, "- " and "* " are bullets). `height` (mm) is the box's height: preflight says when the text
+doesn't fit, and fit="shrink" makes the type smaller until it does (never below the style's minimum).
+
 ### fig.table
 
 ```python
-fig.table(source: 'str | None' = None, x: 'float' = 0, y: 'float' = 0, w: 'float | None' = None, rows: 'list | None' = None, header: 'bool' = True, size: 'float | None' = None, decimals=None, align=None, font: 'str | None' = None, color: 'str' = '#000000', group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+fig.table(source: 'str | None' = None, x: 'float' = 0, y: 'float' = 0, w: 'float | None' = None, rows: 'list | None' = None, header: 'bool' = True, size: 'float | None' = None, decimals=None, align=None, font: 'str | None' = None, color: 'str' = '#000000', grid: 'bool' = False, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
 A table from a .csv, .tsv or .txt file (`source`, relative to the project) or from `rows` ([["Gene",
 "n"], ["CD3E", 12], ...]). (x, y) is its top-left; `w` (mm) widens it (it is never narrower than its text).
 The first row is the header (`header=False`: none). `decimals` rounds numbers with decimals (2, or
 [None, 0, 2, 3] per column); `align` is "lrr"
-(left/centre/right per column), else numbers go right and words left. Size in pt; default the style's.
-Rules above and below the header and at the bottom, as in a printed paper. Journals want tables as text:
+(left/center/right per column), else numbers go right and words left. Size in pt; default the style's.
+Rules above and below the header and at the bottom, as in a printed paper; `grid=True` draws a line between
+every row and column and around the table instead (in `color`). Journals want tables as text:
 the editor's Export Table as Word (and `fignimble table`) writes it as a .docx.
 
 ### fig.line
@@ -97,7 +123,7 @@ A line with an arrowhead at its end (x2, y2).
 ### fig.rect
 
 ```python
-fig.rect(x: 'float', y: 'float', w: 'float', h: 'float', stroke: 'str | None' = '#000000', fill: 'str | None' = None, width: 'float' = 0.5, radius: 'float' = 0, dash: 'str | None' = None, opacity: 'float' = 1.0, label=None, label_dx: 'float | None' = None, label_dy: 'float | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+fig.rect(x: 'float', y: 'float', w: 'float', h: 'float', stroke: 'str | None' = '#000000', fill: 'str | None' = None, width: 'float' = 0.5, radius: 'float' = 0, dash: 'str | None' = None, opacity: 'float' = 1.0, label=None, label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
 A rectangle; `radius` (mm) rounds its corners. stroke/fill None: no outline / no fill. `label` "auto"
@@ -119,7 +145,7 @@ fig.bracket(x1: 'float', x2: 'float', y: 'float', text: 'str' = '*', tick: 'floa
 ```
 
 A significance bracket from x1 to x2 at height y, its ends dropping `tick` mm, with `text` ("*",
-"**", "n.s.", "P = 0.003") centred above it.
+"**", "n.s.", "P = 0.003") centered above it.
 
 ### fig.path
 
@@ -182,7 +208,7 @@ layout). x, y, w, h are fractions of that panel's box, from its top-left corner.
 fig.legend(entries: 'dict', x: 'float' = 0, y: 'float' = 0, ncol: 'int' = 1, title: 'str | None' = None, size: 'float | None' = None, marker: 'str | None' = None, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
-A legend of its own, shared by several panels: {"label": colour or {"color", "marker", "linestyle",
+A legend of its own, shared by several panels: {"label": color or {"color", "marker", "linestyle",
 "kind": "line"|"patch"|"marker"}}. (x, y) is its top-left corner.
 
 ### fig.guide
@@ -193,10 +219,29 @@ fig.guide(x: 'float | None' = None, y: 'float | None' = None)
 
 A guide line at x (vertical) or y (horizontal), in mm, for the editor's snapping.
 
+### fig.caption
+
+```python
+fig.caption(text: 'str')
+```
+
+The figure's caption: free text for the paper, kept with the figure but not drawn on it. The editor's
+Caption tab edits it.
+
+### fig.qr
+
+```python
+fig.qr(data: 'str', x: 'float' = 0, y: 'float' = 0, w: 'float' = 30, color: 'str' = '#000000', background: 'str | None' = '#FFFFFF', level: 'str' = 'M', quiet: 'int' = 4, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+```
+
+A QR code for `data` (a link, usually), `w` mm square including its `quiet` border of light modules
+(4, as the standard asks; scanners need it). `level` is how much of it can be damaged and still read:
+"L" 7%, "M" 15%, "Q" 25%, "H" 30% (more makes a denser code). It stays dark on light in dark versions.
+
 ## Style
 
 ```python
-Style(font: 'str' = 'Arial', size: 'float' = 7, linewidth: 'float' = 0.6, labels: 'Labels | None' = None, despine: 'bool' = True, rc: 'dict | None' = None, min_font: 'float' = 5, min_dpi: 'float' = 300, journal: 'str | None' = None, align_axes: 'bool' = True, palette=None)
+Style(font: 'str' = 'Arial', size: 'float' = 7, linewidth: 'float' = 0.6, labels: 'Labels | None' = None, despine: 'bool' = True, rc: 'dict | None' = None, min_font: 'float' = 5, min_dpi: 'float' = 300, journal: 'str | None' = None, align_axes: 'bool' = True, palette=None, poster: 'str | None' = None)
 ```
 
 What every panel of a figure shares: font, text size, line widths, label style. Put one in a `style.py`
@@ -212,9 +257,10 @@ min_font  the smallest text size (pt) the preflight check accepts
 min_dpi   the lowest resolution (dots per inch, as printed) the preflight check accepts for pictures
 align_axes line up the plot areas of panels that share an edge (a row's tops and bottoms, a column's left
           and right sides), as patchwork does, whatever their tick labels
-palette   the project's colours: a list, {"WT": "#999999", "KO": "#d1495b"}, or the name of one of fignimble's
+palette   the project's colors: a list, {"WT": "#999999", "KO": "#d1495b"}, or the name of one of fignimble's
           (PALETTES: "okabe-ito", "tol-bright", "tol-muted", "tol-vibrant", "colorbrewer-set2", ...). The
-          colours panels plot with in turn, offered as swatches in the editor, and color("KO") in panel code
+          colors panels plot with in turn, offered as swatches in the editor, and color("KO") in panel code
+poster    the poster size this style is for (see Style.poster): ticks and padding grow with the text
 
 ### Style.journal
 
@@ -224,13 +270,23 @@ Style.journal(name: 'str', **overrides) -> "'Style'"
 
 A journal's font, text size and label convention, with any setting overridden.
 
+### Style.poster
+
+```python
+Style.poster(name: 'str' = 'a0', **overrides) -> "'Style'"
+```
+
+Type sizes for a poster read from a meter or two (see fignimble.journals.POSTERS): body text, the
+smallest text preflight accepts, line widths and panel letters for that size of poster, with any setting
+overridden. Pictures are checked against 150 dpi, what a poster is printed at.
+
 ## Labels
 
 ```python
 Labels(format: 'str' = '{}', case: 'str' = 'lower', numbering: 'str' = 'alpha', font: 'str | None' = None, size: 'float' = 8, weight: 'str' = 'bold', style: 'str' = 'normal', color: 'str' = '#000000', dx: 'float' = 0.0, dy: 'float' = 0.0, order: 'str' = 'reading', align: 'bool' = True)
 ```
 
-How panels are labelled (a, b, c ... or A, B, C ...), the same way on every panel.
+How panels are labeled (a, b, c ... or A, B, C ...), the same way on every panel.
 
 format    the label around the letter: "{}" -> a, "({})" -> (a), "{})" -> a), "{}." -> a.
 case      "lower" or "upper"
@@ -260,7 +316,7 @@ The label of the i-th panel (1-based).
 ## Panel
 
 ```python
-Panel(source, function: 'str' = 'draw', args: 'dict | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, texts: 'dict | None' = None, colors: 'dict | None' = None, rotation: 'float' = 0, name: 'str | None' = None, text_style: 'dict | None' = None)
+Panel(source, function: 'str' = 'draw', args: 'dict | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, texts: 'dict | None' = None, colors: 'dict | None' = None, rotation: 'float' = 0, name: 'str | None' = None, text_style: 'dict | None' = None)
 ```
 
 A panel for a layout: like fig.panel(...) without a position, which the layout gives it.
@@ -268,7 +324,7 @@ A panel for a layout: like fig.panel(...) without a position, which the layout g
 ## Image
 
 ```python
-Image(source: 'str', fit: 'str' = 'contain', crop: 'tuple | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, opacity: 'float' = 1.0, rotation: 'float' = 0, flip: 'str | None' = None, name: 'str | None' = None)
+Image(source: 'str', fit: 'str' = 'contain', crop: 'tuple | None' = None, label='auto', label_dx: 'float | None' = None, label_dy: 'float | None' = None, label_x: 'float | None' = None, label_y: 'float | None' = None, opacity: 'float' = 1.0, rotation: 'float' = 0, flip: 'str | None' = None, name: 'str | None' = None)
 ```
 
 A picture for a layout: like fig.image(...) without a position. It fills its cell (fit="contain").
@@ -327,7 +383,7 @@ Each letter's area must be a rectangle.
 color(name, default: 'str | None' = None) -> 'str'
 ```
 
-A colour of the project's palette (Style(palette=...)) by name, or by number for a list.
+A color of the project's palette (Style(palette=...)) by name, or by number for a list.
 
 ## is_dark
 
@@ -335,7 +391,7 @@ A colour of the project's palette (Style(palette=...)) by name, or by number for
 is_dark() -> 'bool'
 ```
 
-True while a panel is drawn for the dark version of its figure: panel code that picks its own colours can
+True while a panel is drawn for the dark version of its figure: panel code that picks its own colors can
 pick ones that read on black (`"white" if is_dark() else "black"`).
 
 ## cached
@@ -354,4 +410,3 @@ fitted) compute it once:
 The result is kept in memory and on disk (the project's .fignimble/cache) until the function's file changes,
 its arguments change, or one of `files` (relative to the project) changes. Results must pickle. Every caller gets
 the same object, so copy a result (`df.copy()`) before changing it in place.
-

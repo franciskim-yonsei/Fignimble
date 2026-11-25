@@ -1,5 +1,5 @@
 site_name: Fignimble
-site_description: The Fignimble user guide. Fignimble is a macOS editor for multi-panel scientific figures, where every figure is Python code you can edit on the canvas, by hand, or with an AI coding agent.
+site_description: The Fignimble user guide. Fignimble is a macOS editor for multi-panel scientific figures and conference posters, where every figure is Python code you can edit on the canvas, by hand, or with an AI coding agent.
 site_url: https://pachterlab.github.io/Fignimble/
 repo_url: https://github.com/pachterlab/Fignimble
 repo_name: pachterlab/Fignimble
@@ -96,8 +96,9 @@ nav:
       - Pictures and BioCartoon icons: guide/pictures.md
       - Text, arrows, shapes and tables: guide/annotating.md
       - Labels, style and journals: guide/style.md
-      - Colour and dark versions: guide/colour.md
+      - Color and dark versions: guide/colour.md
       - Preflight and export: guide/export.md
+      - Posters, and figures inside figures: guide/posters.md
       - Projects on an SSH server: guide/remote.md
   - AI agents and the terminal: ai/agents.md
   - Examples:

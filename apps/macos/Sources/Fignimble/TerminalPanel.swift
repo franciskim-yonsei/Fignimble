@@ -365,7 +365,7 @@ final class TerminalSession: NSView, LocalProcessTerminalViewDelegate {
         env["PATH"] = (extra + (env["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init)).joined(separator: ":")
         if let r = TerminalSession.remote {
             // a project on a server: a shell there, in its folder (agents there edit the files the engine draws)
-            term.startProcess(executable: "/usr/bin/ssh", args: ["-t", r.host, "cd \(r.shellPath) && exec \"$SHELL\" -l"],
+            term.startProcess(executable: "/usr/bin/ssh", args: ["-t"] + SSH.shareOptions + [r.host, "cd \(r.shellPath) && exec \"$SHELL\" -l"],
                               environment: env.map { "\($0.key)=\($0.value)" }, execName: nil, currentDirectory: dir)
             onTitle?()
             return

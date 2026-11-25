@@ -11,7 +11,8 @@ are drawn on the server, by its Python, next to its data. The window on the Mac 
 - **Python there**: the Python that draws the figures. It needs Python 3.10 or newer with matplotlib, pymupdf and
   pillow, plus whatever the panels' code imports. Give the full path of an environment's Python, for example
   `~/miniconda3/envs/analysis/bin/python`, because ssh doesn't run your shell's start-up files. The field remembers
-  the last value for each server.
+  the last value for each server. If that Python lacks one of Fignimble's packages, Fignimble says which, and
+  **Install** installs it there with pip.
 
 The project then appears under **File ▸ Open Recent** with the other projects.
 
@@ -34,29 +35,27 @@ keeps the mirror and the server in step:
 Data files (anything that isn't code, a table, a note or a picture, or that is larger than 8 MB) stay on the server.
 Panels read them there, as they always have.
 
-The terminal tabs are ssh sessions in the project's folder on the server. Unlike the engine, they can ask for a
-password. A picture you place from the Mac is copied into the project's `images/` folder on the server. Exports are
+The terminal tabs are ssh sessions in the project's folder on the server. A picture you place from the Mac is copied into the project's `images/` folder on the server. Exports are
 written on the server and then copied to wherever you chose on the Mac.
 
-## Connecting
+## Logging in
 
-ssh can't ask for a password here, so the server must accept one of these:
+Fignimble logs in to a server once and keeps that connection open for four hours after its last use. Listing
+folders, fetching panels, the project's engine and the terminal tabs all go through it, so none of them ask again.
 
-- your key (`ssh-copy-id server` sets this up);
-- a key held by an ssh-agent;
-- a connection you already opened in a terminal, with `ControlMaster` set in `~/.ssh/config`. This is also the way to
-  use servers that need two-factor login. It makes connecting faster, too:
+If the server asks for something while logging in, such as a password, a two-factor code or a key's passphrase,
+Fignimble shows ssh's question in a dialog. Nothing you type is stored. A server that takes your key logs you in
+without asking.
 
-```
-Host lab
-    HostName lab.example.org
-    ControlMaster auto
-    ControlPath ~/.ssh/cm-%C
-    ControlPersist 4h
-```
+After you log in with a password, Fignimble offers to use a key for that server from now on. It adds your public key
+(`~/.ssh/id_ed25519.pub`, or another one you have) to `~/.ssh/authorized_keys` there. If you don't have a key, it
+makes one first, without a passphrase.
 
-If the connection drops, Fignimble says so. Open the project again from **File ▸ Open Recent**. Edits that had
-not reached the server yet are still in the mirror, and are sent when you reconnect.
+## When the connection drops
+
+ssh checks the connection every 10 seconds. When it drops (the network changed, the Mac slept, the server
+restarted), Fignimble says so within about 30 seconds, and **Reconnect** opens the project again at the same figure.
+Edits that had not reached the server yet are still in the mirror, and are sent when you reconnect.
 
 ## Fonts
 

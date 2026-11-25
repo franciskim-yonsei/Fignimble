@@ -114,6 +114,7 @@ extension MainController {
             self.enqueue { [weak self] in guard let self else { return }
                 busy("Fetching \((path as NSString).lastPathComponent) from \(host)…")
                 do {
+                    try await self.logIn(host)
                     let r = try await self.engine.json("import_remote", ["figure": name, "host": host, "path": path,
                                                                          "x": Double(f.size.width) / 2 - 30, "y": Double(f.size.height) / 2 - 22,
                                                                          "pxPerMM": self.lastPx])
@@ -121,7 +122,7 @@ extension MainController {
                     if let sel = r["select"] as? [String] { canvas.selection = sel }
                     if r["ok"] as? Bool == true { toast("Fetched \((path as NSString).lastPathComponent) from \(host) into panels/") }
                     else { toast(r["error"] as? String ?? "Couldn't fetch the panel", error: true) }
-                } catch { toast(error.localizedDescription, error: true) }
+                } catch SSH.Failure.canceled { idle() } catch { toast(error.localizedDescription, error: true) }
                 await refreshState()
             }
         }
@@ -147,11 +148,12 @@ extension MainController {
         enqueue { [weak self] in guard let self else { return }
             busy("Fetching \(from)…")
             do {
+                try await self.logIn(String(from.prefix { $0 != ":" }))
                 let r = try await self.engine.json("update_remote", ["file": src, "figure": name, "pxPerMM": self.lastPx])
                 if let fig = r["figure"] as? [String: Any] { apply(fig) }
                 if r["ok"] as? Bool == true { toast("Updated \((src as NSString).lastPathComponent) from \(from)") }
                 else { toast(r["error"] as? String ?? "Couldn't update the panel", error: true) }
-            } catch { toast(error.localizedDescription, error: true) }
+            } catch SSH.Failure.canceled { idle() } catch { toast(error.localizedDescription, error: true) }
             await refreshState()
         }
     }
@@ -160,7 +162,7 @@ extension MainController {
 /// Insert ▸ Panel from SSH Server…: a host (from ~/.ssh/config, or typed), a folder there, its folders and .py files.
 /// File ▸ Open Project on SSH Server… (`.project`): the same, to open the listed folder as the project, with the
 /// Python on the server that draws it.
-/// ssh can't ask for a password here, so the server must take a key (or an agent's, or a ControlMaster connection).
+/// Listing logs in first (MainController.logIn): what ssh asks is shown in a dialog.
 @MainActor
 final class RemoteDialog: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSComboBoxDelegate {
     enum Mode { case panel, project }
@@ -179,7 +181,8 @@ final class RemoteDialog: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
     private var path = ""
     private var keep: RemoteDialog?
 
-    init(main: MainController, mode: Mode = .panel) {
+    /// `prefill`: a project to show again (Choose Another Python… after its Python lacked packages).
+    init(main: MainController, mode: Mode = .panel, prefill: RemoteProject? = nil) {
         self.main = main
         self.mode = mode
         super.init()
@@ -199,8 +202,8 @@ final class RemoteDialog: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         status.font = Theme.font(10.5); status.textColor = .secondaryLabelColor; status.preferredMaxLayoutWidth = 480
         status.stringValue = mode == .project
-            ? "Fignimble connects with your SSH key (ssh can't ask for a password here). The figures are drawn on the server, with its Python and data; you edit them here. List a folder, then Open."
-            : "Fignimble connects with your SSH key (ssh can't ask for a password here). The panel's code is copied into panels/; right-click it ▸ Update from Server to fetch it again."
+            ? "The figures are drawn on the server, with its Python and data; you edit them here. List a folder, then Open. If the server asks for a password or a code, Fignimble shows the question."
+            : "The panel's code is copied into panels/; right-click it ▸ Update from Server to fetch it again. If the server asks for a password or a code, Fignimble shows the question."
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel)); cancel.keyEquivalent = "\u{1b}"
         importButton.target = self; importButton.action = #selector(doImport); importButton.isEnabled = false
         if mode == .project { importButton.title = "Open" }
@@ -225,6 +228,11 @@ final class RemoteDialog: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
             stack.topAnchor.constraint(equalTo: panel.contentView!.topAnchor), stack.bottomAnchor.constraint(equalTo: panel.contentView!.bottomAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
         ])
+        if let p = prefill {
+            host.stringValue = p.host; folder.stringValue = p.path; python.stringValue = p.python
+            status.stringValue = "Type the path of a Python on \(p.host) that has matplotlib, pymupdf and pillow (Python 3.10 or newer), then Open."
+            DispatchQueue.main.async { [weak self] in self?.list(); self?.panel.makeFirstResponder(self?.python) }
+        }
         Task { @MainActor in
             let r = (try? await main.engine.json("remote_hosts", [:])) ?? [:]
             let known = Set(host.objectValues.compactMap { $0 as? String })
@@ -249,6 +257,11 @@ final class RemoteDialog: NSObject, NSTableViewDataSource, NSTableViewDelegate, 
         status.stringValue = "Listing \(where_.isEmpty ? "the home folder" : where_) on \(h)…"
         importButton.isEnabled = false
         Task { @MainActor in
+            do { try await m.logIn(h) } catch {
+                status.stringValue = { if case SSH.Failure.canceled = error { return "Canceled." } else { return "Couldn't log in to \(h): " + error.localizedDescription } }()
+                status.textColor = .systemRed
+                return
+            }
             let r = (try? await m.engine.json("remote_list", ["host": h, "path": where_])) ?? ["ok": false, "error": "no answer"]
             guard r["ok"] as? Bool == true else {
                 status.stringValue = "Couldn't list it: " + (r["error"] as? String ?? "")

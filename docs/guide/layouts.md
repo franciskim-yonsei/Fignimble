@@ -28,7 +28,7 @@ fig.layout(Design("""
 ```
 
 - `Spacer()` leaves a cell empty and `Image("images/gel.png")` puts a picture in one.
-- `gap` sets the space between cells in millimetres.
+- `gap` sets the space between cells in millimeters.
 
 ## Plot areas line up
 

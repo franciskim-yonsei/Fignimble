@@ -1,7 +1,8 @@
 """Panels from an SSH server: list a folder there and fetch a panel's code into the project.
 
-ssh runs without asking for a password (BatchMode), so the server must take your key or an ssh-agent's, or a
-connection you opened in a terminal (ControlMaster in ~/.ssh/config). Hosts come from ~/.ssh/config.
+ssh runs here without asking anything (BatchMode). The app logs in first (SSHLogin.swift), showing what ssh asks
+(a password, a code) in a dialog, and leaves a shared connection open in FIGNIMBLE_SSH_SHARE that these commands
+use; without it the server must take your key or an ssh-agent's. Hosts come from ~/.ssh/config.
 FIGNIMBLE_SSH replaces the command (the tests use a stand-in).
 """
 
@@ -22,6 +23,13 @@ class RemoteError(Exception):
 
 def _ssh():
     return shlex.split(os.environ.get("FIGNIMBLE_SSH", "ssh"))
+
+
+def ssh_command() -> list[str]:
+    """ssh and its options, through the app's shared connection to the server when there is one."""
+    share = os.environ.get("FIGNIMBLE_SSH_SHARE")
+    opts = ["-o", f"ControlPath={share}/%C", "-o", "ControlMaster=auto", "-o", "ControlPersist=4h"] if share else []
+    return _ssh() + OPTIONS + opts
 
 
 def hosts() -> list[str]:
@@ -64,8 +72,7 @@ def _run(args, timeout=40) -> bytes:
         err = (r.stderr or r.stdout).decode(errors="replace").strip().splitlines()
         msg = err[-1] if err else f"exit status {r.returncode}"
         if "Permission denied" in msg or "password" in msg.lower():
-            msg += (" (Fignimble can't type a password: add your key to the server with ssh-copy-id, use an "
-                    "ssh-agent, or log in once in Fignimble's terminal with ControlMaster set in ~/.ssh/config)")
+            msg += " (the login to the server has ended: try again, and Fignimble asks for what the server needs)"
         raise RemoteError(msg)
     return r.stdout
 
@@ -89,7 +96,7 @@ def list_dir(host: str, path: str = "") -> dict:
     `path` is empty)."""
     _check_host(host)
     script = f"cd {_quote(path) if path else '~'} && pwd && ls -1Ap"
-    out = _run(_ssh() + OPTIONS + [host, "--", script]).decode(errors="replace").splitlines()
+    out = _run(ssh_command() + [host, "--", script]).decode(errors="replace").splitlines()
     if not out:
         raise RemoteError("no answer from the server")
     entries = []
@@ -105,7 +112,7 @@ def list_dir(host: str, path: str = "") -> dict:
 def fetch(host: str, path: str, dest: Path) -> Path:
     """Copy `path` on `host` to the local file `dest`."""
     _check_host(host)
-    data = _run(_ssh() + OPTIONS + [host, "--", f"cat -- {_quote(path)}"], timeout=120)
+    data = _run(ssh_command() + [host, "--", f"cat -- {_quote(path)}"], timeout=120)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     return dest
