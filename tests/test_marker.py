@@ -100,3 +100,66 @@ def test_new_figure_in_unmarked_project_does_not_mark_it(tmp_path):
         assert templates.read_marker(tmp_path) is None               # the app asks instead
     finally:
         s.close()
+
+
+# --- files outside the project that a figure reads are watched like its own ---
+
+from fignimble.render import Renderer  # noqa: E402
+from PIL import Image as PILImage  # noqa: E402
+import json  # noqa: E402
+import time  # noqa: E402
+
+
+def _outside_setup(tmp_path):
+    ana = tmp_path / "analysis"
+    ana.mkdir()
+    PILImage.new("RGB", (40, 30), "red").save(ana / "umap.png")
+    (ana / "labels.py").write_text('XLABEL = "first"\n')
+    (ana / "plots.py").write_text("import labels\n\ndef umap(fig):\n    ax = fig.add_subplot()\n"
+                                  "    ax.plot([0, 1], [0, 1])\n    ax.set_xlabel(labels.XLABEL)\n")
+    d = Path(templates.new_project(str(tmp_path / "fignimble"))["project"])
+    with open(d / "fig1.py", "a") as f:
+        f.write('fig.image("../analysis/umap.png", x=4, y=3, w=40)\n'
+                'fig.panel("../analysis/plots.py", x=60, y=3, w=60, h=50, function="umap")\n')
+    return d, ana
+
+
+def _bump(path, text=None):
+    if text is not None:
+        path.write_text(text)
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+
+
+def test_renderer_watches_and_reloads_outside_files(tmp_path, monkeypatch):
+    d, ana = _outside_setup(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    r = Renderer(str(d))
+    res = r.render(str(d / "fig1.py"), sprites=False)
+    out = set(res["outside"])
+    assert {str((ana / n).resolve()) for n in ("umap.png", "plots.py", "labels.py")} <= out
+    assert "first" in json.dumps(res["elements"])
+    before = r.fingerprint()
+    _bump(ana / "labels.py", 'XLABEL = "second"\n')      # a module the outside panel code imports
+    assert r.fingerprint() != before
+    res = r.render(str(d / "fig1.py"), sprites=False)
+    assert "second" in json.dumps(res["elements"]) and "first" not in json.dumps(res["elements"])
+    # a fresh process (fignimble export) knows them from the cache
+    assert set(Renderer(str(d)).outside_files()) == out
+
+
+def test_session_redraws_when_outside_picture_changes(tmp_path):
+    d, ana = _outside_setup(tmp_path)
+    s = Session(str(d), sys.executable)
+    try:
+        s.render("fig1")
+        sig = s._sig
+        assert s.fingerprint() == sig                      # watching them is not itself a change
+        assert s.render("fig1") is s.render("fig1")        # and the render stays cached
+        PILImage.new("RGB", (40, 30), "blue").save(ana / "umap.png")
+        _bump(ana / "umap.png")
+        assert s.fingerprint() != sig                      # the watcher sees it and the app redraws
+        first = s.renders["fig1"][2]
+        assert s.render("fig1") is not first
+    finally:
+        s.close()

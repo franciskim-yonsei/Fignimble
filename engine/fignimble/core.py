@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from . import remote, srcedit, tables, templates
-from .render import SKIP_DIRS, is_figure_source, is_table_source
+from .render import SKIP_DIRS, is_figure_source, is_table_source, outside_stats
 from .srcedit import REMOVE, EditError, Raw, Source
 
 ENGINE_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -208,6 +208,9 @@ class Session:
         self.closed = False
         self.current: str | None = None
         self.dark = False                              # the editor shows the figures' dark versions
+        # files outside the project each figure read when last drawn (a picture an analysis writes, panel code kept
+        # with it): watched with the project's own, so that when one changes the figure is drawn again
+        self.outside: dict[str, list[str]] = {}
         self._sig = self.fingerprint()
         self.agent_files = templates.write_agent_files(self.project)
         threading.Thread(target=self._watch, daemon=True).start()
@@ -236,6 +239,7 @@ class Session:
                     continue
                 items.append((dirpath, f, st.st_mtime_ns, st.st_size))
         items.sort()
+        items += outside_stats(sorted({f for fs in self.outside.values() for f in fs}))
         return str(hash(tuple(items)))
 
     def figures(self) -> list[dict]:
@@ -316,6 +320,18 @@ class Session:
                 return got[2]
             res = self.worker.request({"cmd": "render", "project": str(self.project), "cache": str(self.cache),
                                        "file": self.figure_file(name), "pxPerMM": px, "dark": dark})
+            outside = list(res.get("outside") or []) if not res.get("error") else self.outside.get(name, [])
+            if outside != self.outside.get(name, []):
+                # the files watched outside the project changed: they join the signature, without that change
+                # itself counting as an edit (unless something else changed while the figure was drawn)
+                if outside:
+                    self.outside[name] = outside
+                else:
+                    self.outside.pop(name, None)
+                new = self.fingerprint()
+                if self._sig == sig:
+                    self._sig = new
+                sig = new
             self.renders[name] = (sig, px, res)
             return res
 

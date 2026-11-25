@@ -168,6 +168,26 @@ class Piece:
     meta: dict = field(default_factory=dict)
 
 
+def _is_library(path: str) -> bool:
+    """A file of an installed package (or of Python itself), never reloaded or watched as the user's code."""
+    parts = Path(path).parts
+    if "site-packages" in parts or "dist-packages" in parts:
+        return True
+    return any(path.startswith(os.path.abspath(p) + os.sep) for p in {sys.prefix, sys.base_prefix, sys.exec_prefix})
+
+
+def outside_stats(files) -> list:
+    """(path, mtime, size) of each file, (path, None, None) for one that is gone: what changes when they do."""
+    out = []
+    for f in files:
+        try:
+            st = os.stat(f)
+            out.append((f, st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((f, None, None))
+    return out
+
+
 class Renderer:
     def __init__(self, project: str, cache: str | None = None):
         self.project = Path(project).resolve()
@@ -180,15 +200,61 @@ class Renderer:
         self.raster_dpi = 600                    # what panels draw their rasters at (imshow, rasterized scatters)
         self._stack: list[Path] = []             # the figure files being drawn, outermost first (fig.figure nests)
         self.used: set[Path] = set()             # the files the last render read, for an export's provenance
+        # files outside the project that figures read (pictures, panel code and the modules it imports), by figure
+        # file: watched like the project's own, and kept on disk so that a fresh process knows them too
+        self._outside: dict[str, list[str]] = {}
+        try:
+            got = json.loads((self.cache / "outside.json").read_text(encoding="utf-8"))
+            self._outside = {k: [str(f) for f in v] for k, v in got.items() if isinstance(v, list)}
+        except (OSError, ValueError, AttributeError):
+            pass
 
     # --- running user code ---
 
+    def _outside_dirs(self) -> list[str]:
+        """The folders of code outside the project that panels run: modules imported from them are reloaded too."""
+        return sorted({os.path.dirname(f) for fs in self._outside.values() for f in fs if f.endswith(".py")})
+
     def _purge_modules(self):
-        root = str(self.project)
+        roots = [str(self.project)] + self._outside_dirs()
         for name, mod in list(sys.modules.items()):
             f = getattr(mod, "__file__", None) or ""
-            if name != "__main__" and f and os.path.isfile(f) and os.path.abspath(f).startswith(root + os.sep):
+            if name == "__main__" or not f or not os.path.isfile(f):
+                continue
+            f = os.path.abspath(f)
+            if any(f.startswith(r + os.sep) for r in roots) and not _is_library(f):
                 del sys.modules[name]
+
+    def outside_files(self, file=None) -> list[str]:
+        """Files outside the project that a figure (or, without `file`, any figure) read when last drawn."""
+        if file is not None:
+            return list(self._outside.get(str(Path(file).resolve()), []))
+        return sorted({f for fs in self._outside.values() for f in fs})
+
+    def _note_outside(self, file):
+        """After drawing `file`: the files outside the project it read, and the modules its outside code imported
+        from the folders that code is in."""
+        root = str(self.project) + os.sep
+        files = {str(f) for f in self.used if not str(f).startswith(root)}
+        dirs = {os.path.dirname(f) for f in files if f.endswith(".py")}
+        if dirs:
+            for mod in list(sys.modules.values()):
+                f = getattr(mod, "__file__", None) or ""
+                if f and f.endswith(".py"):
+                    f = os.path.abspath(f)
+                    if any(f.startswith(d + os.sep) for d in dirs) and not _is_library(f):
+                        files.add(f)
+        key, new = str(Path(file).resolve()), sorted(files)
+        if self._outside.get(key, []) == new:
+            return
+        if new:
+            self._outside[key] = new
+        else:
+            self._outside.pop(key, None)
+        try:
+            (self.cache / "outside.json").write_text(json.dumps(self._outside, indent=1), encoding="utf-8")
+        except OSError:
+            pass
 
     def _enter(self):
         os.chdir(self.project)
@@ -215,7 +281,8 @@ class Renderer:
         return api._FIGURES[0]
 
     def fingerprint(self) -> str:
-        """What a panel can read besides its own code: every other file of the project except figure files."""
+        """What a panel can read besides its own code: every other file of the project except figure files, and the
+        files outside the project that figures read (code a panel imports from there)."""
         items = []
         for dirpath, dirs, files in os.walk(self.project):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
@@ -232,7 +299,7 @@ class Renderer:
                 except OSError:
                     continue
                 items.append((str(p.relative_to(self.project)), st.st_mtime_ns, st.st_size))
-        return _h(sorted(items))
+        return _h(sorted(items), outside_stats(self.outside_files()))
 
     # --- pieces ---
 
@@ -267,6 +334,9 @@ class Renderer:
         if fn is not None:
             return fn
         self._enter()
+        here = str(Path(path).parent)
+        if not str(path).startswith(str(self.project) + os.sep) and here not in sys.path:
+            sys.path.insert(1, here)          # code kept with an analysis imports its neighbours, as when run there
         ns = runpy.run_path(str(path), run_name="__fignimble_panel__")
         fn = ns.get(props["function"])
         if not callable(fn):
@@ -1269,6 +1339,7 @@ class Renderer:
             return {"figure": name, "file": str(Path(file).resolve()), "error": _user_traceback(Path(file).name)}
         self._stack, self.used = [Path(file).resolve()], {Path(file).resolve()}
         pieces, infos, labels = self.pieces(fig)
+        self._note_outside(file)
         doc = self.compose(fig, pieces)
         out = self.cache / "out"
         page = doc[0]
@@ -1303,6 +1374,7 @@ class Renderer:
             "warnings": self.preflight(fig, pieces, infos, labels),
             "thumb": str(thumb),
             "pxPerMM": px_per_mm,
+            "outside": self.outside_files(file),
         }
 
     # --- checks ---
@@ -1472,6 +1544,7 @@ class Renderer:
             raise ValueError("bleed and crop marks are for PDF, what print shops take")
         self._stack, self.used = [self.resolve(file)], {self.resolve(file)}
         pieces, infos, labels = self.pieces(fig)
+        self._note_outside(self.resolve(file))
         doc = self.compose(fig, pieces, bleed, marks)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if fmt == "png" and cmyk:
