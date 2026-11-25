@@ -29,7 +29,7 @@ public partial class MainWindow : Window
             await Reload();
         };
         Page.EditCompleted += async edit => await CanvasEdited(edit);
-        Page.SelectionChanged += SyncGeometry;
+        Page.SelectionChanged += CanvasSelectionChanged;
         UpdateControls();
         SyncGeometry();
         Status.Text = "Open a project, or create one and try Add sample plot.";
@@ -75,6 +75,8 @@ public partial class MainWindow : Window
         NewFigureButton.IsEnabled = ReloadButton.IsEnabled = !busy && project is not null;
         ImportButton.IsEnabled = SampleButton.IsEnabled = !busy && validFigure;
         Geometry.IsEnabled = !busy && validFigure;
+        AnnotationButton.IsEnabled = !busy && validFigure;
+        UpdateLayerControls();
         UndoButton.IsEnabled = !busy && state?.CanUndo == true;
         RedoButton.IsEnabled = !busy && state?.CanRedo == true;
         ExportButton.IsEnabled = !busy && validFigure;
@@ -153,6 +155,7 @@ public partial class MainWindow : Window
         currentRender = null;
         validFigure = false;
         Page.ShowFigure(null, false);
+        RefreshLayers();
         PageView.Visibility = Visibility.Collapsed;
         EmptyCanvas.Visibility = Visibility.Visible;
         EmptyCanvas.Text = project is null ? "Open a folder containing a Fignimble figure (.py)." : "No figure selected.";
@@ -171,6 +174,8 @@ public partial class MainWindow : Window
         currentRender = render;
         validFigure = render.Error is null && render.Size is [> 0, > 0];
         Page.ShowFigure(validFigure ? render : null, preserve);
+        RefreshLayers();
+        UpdateZoom();
         PageView.Visibility = validFigure ? Visibility.Visible : Visibility.Collapsed;
         EmptyCanvas.Visibility = validFigure ? Visibility.Collapsed : Visibility.Visible;
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
@@ -189,16 +194,17 @@ public partial class MainWindow : Window
     {
         if (!validFigure || shownFigure is not { } name) return Task.CompletedTask;
         object args = edit.NewBox is { } box
-            ? new { figure = name, op = "resize", oid = edit.Oid, box = new[] { box.X, box.Y, box.Width, box.Height } }
-            : new { figure = name, op = "move", oids = new[] { edit.Oid }, dx = edit.Delta.X, dy = edit.Delta.Y };
+            ? new { figure = name, op = "resize", oid = edit.Oids[0], box = new[] { box.X, box.Y, box.Width, box.Height } }
+            : new { figure = name, op = "move", oids = edit.Oids, dx = edit.Delta.X, dy = edit.Delta.Y };
         return EditFigure(name, args, "Updating figure…");
     }
 
     private Task EditFigure(string figure, object args, string status, bool clearSelection = false) => During(status, async () =>
     {
         var result = await engine!.CallAsync<EditResult>("edit", args);
-        if (clearSelection) Page.Select(null);
+        if (clearSelection && !result.Unchanged) Page.Select(null);
         ShowRender(result.Figure);
+        if (result.Select is { Length: > 0 }) Page.SelectIds(result.Select);
         await ReadState(figure);
     });
 
@@ -218,25 +224,34 @@ public partial class MainWindow : Window
     private async void ExportClicked(object sender, RoutedEventArgs e)
     {
         if (!validFigure || shownFigure is not { } figure) return;
-        var dialog = new SaveFileDialog { Title = "Export figure", Filter = "PDF (*.pdf)|*.pdf|SVG (*.svg)|*.svg|PNG (*.png)|*.png",
-            FileName = figure, InitialDirectory = project };
-        if (dialog.ShowDialog(this) != true) return;
-        await ExportFigure(figure, dialog.FileName);
+        await ChooseExport(figure);
     }
 
-    private Task ExportFigure(string figure, string path) => During("Exporting figure…", async () =>
+    private Task ExportFigure(string figure, string path, int dpi, string journal) => During("Exporting figure…", async () =>
     {
         string format = Path.GetExtension(path).ToLowerInvariant();
-        if (format is not (".pdf" or ".svg" or ".png"))
-            throw new ArgumentException("Choose a .pdf, .svg, or .png filename.");
-        var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..] });
-        Status.Text = $"Exported {path}" + (result.Warnings is { Length: > 0 } warnings ? $" · {warnings[0]}" : "");
+        if (format is not (".pdf" or ".svg" or ".png" or ".tiff"))
+            throw new ArgumentException("Choose a .pdf, .svg, .png, or .tiff filename.");
+        var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..], dpi,
+            journal = string.IsNullOrEmpty(journal) ? null : journal });
+        if (result.Warnings is { Length: > 0 } warnings)
+        {
+            Warnings.ItemsSource = warnings.Select(w => "Export: " + w).Concat(Warnings.Items.Cast<string>()).Distinct().ToArray();
+            Checks.IsExpanded = true;
+            Status.Text = $"Exported {path} · {warnings.Length} warning(s); see Preflight.";
+        }
+        else Status.Text = $"Exported {path}";
     });
 
     private async void HandleKey(object sender, KeyEventArgs e)
     {
         var modifiers = Keyboard.Modifiers;
-        if (modifiers == ModifierKeys.Control && e.Key == Key.Z && UndoButton.IsEnabled)
+        if (e.Key == Key.Escape && !busy && !Page.IsDragging && Page.SelectedIds.Count > 0)
+        {
+            e.Handled = true;
+            Page.Select(null);
+        }
+        else if (modifiers == ModifierKeys.Control && e.Key == Key.Z && UndoButton.IsEnabled)
         {
             e.Handled = true;
             await History("undo");

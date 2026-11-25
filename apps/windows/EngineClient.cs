@@ -147,13 +147,20 @@ internal sealed class EngineClient : IDisposable
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo);
 internal sealed record FigureEntry(string Name);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
-    FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error);
+    FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal);
 internal sealed record FigureWarning(string Level, string Message);
-internal sealed record FigureElement(string Oid, string? Kind, double[] Box, Sprite? Sprite, string? Parent,
-    string? Host, ElementProperties? Props);
-internal sealed record ElementProperties(bool Locked, bool Hidden);
+internal sealed record FigureElement(string Oid, string? Kind, double[]? Box, Sprite? Sprite, string? Parent,
+    string? Host, ElementProperties? Props, string? Method, string? Panel, string? Text);
+internal sealed record ElementProperties(bool Locked, bool Hidden, string? Name, string? Source, string? Text,
+    string? Label, double? X1, double? Y1, double? X2, double? Y2);
+internal sealed record RenderJournal(string Key);
+internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths);
+internal sealed record JournalChoice(string Key, string Name, Dictionary<string, double>? Widths = null)
+{
+    public override string ToString() => Name;
+}
 internal sealed record Sprite(string File, double X, double Y, double W, double H);
-internal sealed record EditResult(FigureRender Figure, string[]? Select);
+internal sealed record EditResult(FigureRender Figure, string[]? Select, bool Unchanged);
 internal sealed record NewProjectResult(string Project, string Figure);
 internal sealed record NewFigureResult(string Name);
 internal sealed record ExportResult(string[]? Warnings);

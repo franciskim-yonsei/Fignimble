@@ -10,16 +10,23 @@ public partial class MainWindow
 {
     private async void NewProjectClicked(object sender, RoutedEventArgs e)
     {
+        JournalChoice[] choices = [];
+        await During("Loading project presets…", async () => { choices = await Journals(); Status.Text = "Choose a project preset."; });
+        if (choices.Length == 0) return;
+        var setup = new FormDialog(this, "New project");
+        var journal = setup.Choice("Shared project style", choices.Prepend(GeneralJournal),
+            choices.FirstOrDefault(j => j.Key == "nature") ?? GeneralJournal);
+        if (!setup.Confirm("Choose folder…", () => null)) return;
         var dialog = new OpenFolderDialog { Title = "Choose or create an empty folder for the project" };
         if (project is not null) dialog.InitialDirectory = Path.GetDirectoryName(project);
-        if (dialog.ShowDialog(this) == true) await CreateProject(dialog.FolderName);
+        if (dialog.ShowDialog(this) == true) await CreateProject(dialog.FolderName, ((JournalChoice)journal.SelectedItem).Key);
     }
 
-    private Task CreateProject(string folder) => During("Creating project…", async () =>
+    private Task CreateProject(string folder, string journal) => During("Creating project…", async () =>
     {
         if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any())
             throw new IOException("The project folder must be empty. Choose or create a different folder.");
-        var result = await GetEngine().CallAsync<NewProjectResult>("new_project", new { dir = folder, journal = "nature" });
+        var result = await GetEngine().CallAsync<NewProjectResult>("new_project", new { dir = folder, journal });
         await OpenProjectCore(result.Project, result.Figure);
     });
 
@@ -92,15 +99,25 @@ public partial class MainWindow
     private void SyncGeometry()
     {
         var selected = Page.Selection;
-        bool panel = selected is not null;
-        Geometry.Header = panel ? $"{(selected!.Kind == "image" ? "Image" : "Panel")} geometry (mm)" : "Page geometry (mm)";
-        XField.Visibility = YField.Visibility = RemoveButton.Visibility = panel ? Visibility.Visible : Visibility.Collapsed;
-        FitButton.Visibility = panel ? Visibility.Collapsed : Visibility.Visible;
+        int count = Page.SelectedIds.Count;
+        bool page = count == 0;
+        bool panel = selected is not null && FigureCanvas.Resizable(selected);
+        Geometry.Header = page ? "Page geometry (mm)" : panel ? "Layer geometry (mm)" : count == 1 ? "Layer" : $"{count} selected layers";
+        XField.Visibility = YField.Visibility = panel ? Visibility.Visible : Visibility.Collapsed;
+        XInput.IsEnabled = YInput.IsEnabled = panel;
+        WidthInput.IsEnabled = HeightInput.IsEnabled = ApplyButton.IsEnabled = page || panel;
+        FitButton.Visibility = PresetButton.Visibility = page ? Visibility.Visible : Visibility.Collapsed;
         FitButton.IsEnabled = currentRender?.Elements?.Any(FigureCanvas.HasBox) == true;
-        XInput.Text = panel ? FormatMm(selected!.Box[0]) : "";
-        YInput.Text = panel ? FormatMm(selected!.Box[1]) : "";
-        WidthInput.Text = FormatMm(panel ? selected!.Box[2] : currentRender?.Size?[0]);
-        HeightInput.Text = FormatMm(panel ? selected!.Box[3] : currentRender?.Size?[1]);
+        RemoveButton.Visibility = count == 1 ? Visibility.Visible : Visibility.Collapsed;
+        RemoveButton.IsEnabled = selected is not null && FigureCanvas.Unlocked(selected);
+        bool details = selected?.Kind is "panel" or "image" or "text" or "line" or "bracket";
+        DetailsButton.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
+        DetailsButton.IsEnabled = details && FigureCanvas.Unlocked(selected!);
+        DetailsButton.Content = selected?.Kind is "panel" or "image" ? "Label…" : "Edit…";
+        XInput.Text = panel ? FormatMm(selected!.Box![0]) : "";
+        YInput.Text = panel ? FormatMm(selected!.Box![1]) : "";
+        WidthInput.Text = FormatMm(panel ? selected!.Box![2] : page ? currentRender?.Size?[0] : null);
+        HeightInput.Text = FormatMm(panel ? selected!.Box![3] : page ? currentRender?.Size?[1] : null);
     }
 
     private async void ApplyGeometryClicked(object sender, RoutedEventArgs e) => await ApplyGeometry();
@@ -110,6 +127,7 @@ public partial class MainWindow
         if (!validFigure || currentRender?.Size is not [var width, var height] || shownFigure is not { } figure)
             return Task.CompletedTask;
         var panel = Page.Selection;
+        if (Page.SelectedIds.Count > 0 && (panel is null || !FigureCanvas.Resizable(panel))) return Task.CompletedTask;
         var props = new Dictionary<string, double>();
         double[] current = panel?.Box ?? [0, 0, width, height];
         (string key, TextBox field, int i)[] fields =
@@ -138,8 +156,8 @@ public partial class MainWindow
 
     private async void RemoveClicked(object sender, RoutedEventArgs e)
     {
-        if (!validFigure || shownFigure is not { } figure || Page.Selection is not { } selected) return;
-        await EditFigure(figure, new { figure, op = "delete", oids = new[] { selected.Oid } }, "Removing panel…",
+        if (!validFigure || shownFigure is not { } figure || Page.Selection is not { } selected || !FigureCanvas.Unlocked(selected)) return;
+        await EditFigure(figure, new { figure, op = "delete", oids = new[] { selected.Oid } }, "Removing layer…",
             clearSelection: true);
     }
 

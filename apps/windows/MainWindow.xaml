@@ -18,6 +18,8 @@
       <ToolBar Band="1" BandIndex="0">
         <Button x:Name="ImportButton" Click="ImportClicked" Padding="8,4" ToolTip="Add a Python panel, image, or table">_Import…</Button>
         <Button x:Name="SampleButton" Click="SampleClicked" Padding="8,4" ToolTip="Insert a self-contained matplotlib example">Add _sample plot</Button>
+        <Button x:Name="AnnotationButton" Click="AnnotationClicked" Padding="8,4">Annotate…</Button>
+        <Button x:Name="ArrangeButton" Click="ArrangeClicked" Padding="8,4">Arrange ▾</Button>
         <Separator />
         <Button x:Name="UndoButton" Click="UndoClicked" Padding="8,4" ToolTip="Ctrl+Z">_Undo</Button>
         <Button x:Name="RedoButton" Click="RedoClicked" Padding="8,4" ToolTip="Ctrl+Y">_Redo</Button>
@@ -29,19 +31,49 @@
     </Border>
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" MinWidth="240" />
+        <ColumnDefinition Width="175" MinWidth="120" />
+        <ColumnDefinition Width="5" />
+        <ColumnDefinition Width="*" MinWidth="170" />
         <ColumnDefinition Width="5" />
         <ColumnDefinition Width="340" MinWidth="190" />
       </Grid.ColumnDefinitions>
-      <Grid Background="#E6E8EC" ClipToBounds="True">
-        <TextBlock x:Name="EmptyCanvas" Text="Open a folder containing a Fignimble figure (.py)."
-                   HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="16" />
-        <Viewbox x:Name="PageView" Margin="20" Visibility="Collapsed">
-          <local:FigureCanvas x:Name="Page" AutomationProperties.Name="Figure canvas" />
-        </Viewbox>
-      </Grid>
+      <DockPanel Grid.Column="0" Margin="6">
+        <TextBlock DockPanel.Dock="Top" Text="Layers · front to back" FontWeight="SemiBold" Margin="0,2,0,5" />
+        <WrapPanel DockPanel.Dock="Bottom" Margin="0,5,0,0">
+          <Button x:Name="FrontButton" Click="LayerButtonClicked" Tag="front" Content="Front" Padding="4,2" />
+          <Button x:Name="ForwardButton" Click="LayerButtonClicked" Tag="forward" Content="Up" Padding="4,2" />
+          <Button x:Name="BackwardButton" Click="LayerButtonClicked" Tag="backward" Content="Down" Padding="4,2" />
+          <Button x:Name="BackButton" Click="LayerButtonClicked" Tag="back" Content="Back" Padding="4,2" />
+          <Button x:Name="VisibilityButton" Click="VisibilityClicked" Content="Hide" Padding="4,2" />
+          <Button x:Name="LockButton" Click="LockClicked" Content="Lock" Padding="4,2" />
+        </WrapPanel>
+        <ListBox x:Name="Layers" SelectionMode="Extended" SelectionChanged="LayersChanged"
+                 MouseDoubleClick="LayersDoubleClicked" DisplayMemberPath="Title" AutomationProperties.Name="Layers"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
+      </DockPanel>
       <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#D0D0D0" />
-      <DockPanel Grid.Column="2">
+      <DockPanel Grid.Column="2" Background="#E6E8EC">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="4">
+          <Button Click="ZoomClicked" Tag="out" Content="−" Width="30" AutomationProperties.Name="Zoom out" />
+          <Button Click="ZoomClicked" Tag="fit" Content="Fit" Width="40" />
+          <Button Click="ZoomClicked" Tag="in" Content="+" Width="30" AutomationProperties.Name="Zoom in" />
+          <TextBlock x:Name="ZoomText" Margin="8,2,0,0" Text="Fit" />
+        </StackPanel>
+        <Grid ClipToBounds="True">
+          <TextBlock x:Name="EmptyCanvas" Text="Open a folder containing a Fignimble figure (.py)."
+                     HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Margin="16" />
+          <ScrollViewer x:Name="Viewport" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                        SizeChanged="ViewportResized" PreviewMouseWheel="ViewportWheel" PanningMode="Both"
+                        PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded" PreviewMouseMove="PanMoved"
+                        LostMouseCapture="PanLost">
+            <Viewbox x:Name="PageView" Margin="14" Visibility="Collapsed">
+              <local:FigureCanvas x:Name="Page" AutomationProperties.Name="Figure canvas" />
+            </Viewbox>
+          </ScrollViewer>
+        </Grid>
+      </DockPanel>
+      <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch" Background="#D0D0D0" />
+      <DockPanel Grid.Column="4">
         <GroupBox x:Name="Geometry" DockPanel.Dock="Top" Header="Page geometry (mm)" Margin="8,6,8,4">
           <StackPanel Margin="6">
             <UniformGrid Columns="2">
@@ -65,7 +97,9 @@
             <WrapPanel Margin="3,6,3,2">
               <Button x:Name="ApplyButton" Click="ApplyGeometryClicked" Content="Apply" Padding="8,3" />
               <Button x:Name="FitButton" Click="FitClicked" Content="Fit page to content" Padding="8,3" Margin="6,0,0,0" />
-              <Button x:Name="RemoveButton" Click="RemoveClicked" Content="Remove panel" Padding="8,3" Margin="6,0,0,0" />
+              <Button x:Name="PresetButton" Click="PresetClicked" Content="Journal width…" Padding="8,3" Margin="6,0,0,0" />
+              <Button x:Name="DetailsButton" Click="DetailsClicked" Content="Edit…" Padding="8,3" Margin="6,0,0,0" />
+              <Button x:Name="RemoveButton" Click="RemoveClicked" Content="Remove" Padding="8,3" Margin="6,0,0,0" />
             </WrapPanel>
           </StackPanel>
         </GroupBox>

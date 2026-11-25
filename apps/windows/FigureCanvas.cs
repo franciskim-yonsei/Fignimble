@@ -11,7 +11,7 @@ public sealed class FigureCanvas : FrameworkElement
     // The viewbox fits this surface to the window. All geometry and pointer deltas here are in millimeters.
     private readonly Dictionary<string, BitmapSource> images = new(StringComparer.OrdinalIgnoreCase);
     private FigureRender? figure;
-    private string? selected;
+    private string[] selected = [];
     private Point? start;
     private Vector delta;
     private bool resizing;
@@ -22,31 +22,41 @@ public sealed class FigureCanvas : FrameworkElement
     internal event Action<CanvasEdit>? EditCompleted;
     internal event Action? SelectionChanged;
     internal bool IsDragging => start.HasValue;
-    internal FigureElement? Selection => figure?.Elements?.FirstOrDefault(e => e.Oid == selected);
+    internal IReadOnlyList<string> SelectedIds => selected;
+    internal FigureElement[] Selections => (figure?.Elements ?? []).Where(e => selected.Contains(e.Oid)).ToArray();
+    internal FigureElement? Selection => selected.Length == 1 ? Selections.FirstOrDefault() : null;
 
-    internal void Select(string? oid)
+    internal void Select(string? oid) => SelectIds(oid is null ? [] : [oid]);
+
+    internal void SelectIds(IEnumerable<string> ids)
     {
-        selected = oid;
-        if (Selection is not { } element || !Editable(element)) selected = null;
+        var available = (figure?.Elements ?? []).Where(TopLevel).Select(e => e.Oid).ToHashSet();
+        var next = ids.Where(available.Contains).Distinct().ToArray();
+        if (selected.SequenceEqual(next)) return;
+        selected = next;
         InvalidateVisual();
         SelectionChanged?.Invoke();
     }
 
     internal void ShowFigure(FigureRender? render, bool keepSelection)
     {
-        if (!keepSelection) selected = null;
         figure = render;
-        if (Selection is not { } selection || !Editable(selection)) selected = null;
+        SelectIds(keepSelection ? selected : []);
         images.Clear();
         Width = render?.Size?[0] ?? 1;
         Height = render?.Size?[1] ?? 1;
         InvalidateVisual();
     }
 
-    private static bool Editable(FigureElement e) => (e.Kind is "panel" or "image") && e.Parent is null && e.Host is null
-        && e.Props is not { Locked: true } and not { Hidden: true } && HasBox(e);
-    internal static bool HasBox(FigureElement e) => e.Box is { Length: 4 } && e.Box[2] > 0 && e.Box[3] > 0;
-    internal static Rect Box(FigureElement e) => new(e.Box[0], e.Box[1], e.Box[2], e.Box[3]);
+    internal static bool TopLevel(FigureElement e) => e.Parent is null;
+    internal static bool Unlocked(FigureElement e) => e.Props is not { Locked: true } and not { Hidden: true };
+    internal static bool Movable(FigureElement e) => TopLevel(e) && Unlocked(e) && e.Host is null && HasBox(e) &&
+        e.Kind is "panel" or "image" or "text" or "line" or "bracket" or "rect" or "ellipse" or "figure" or "table" or "layout" or "qr" or "path" or "legend";
+    internal static bool Resizable(FigureElement e) => Movable(e) && e.Kind is "panel" or "image";
+    private static bool CanHit(FigureElement e) => TopLevel(e) && e.Props is not { Hidden: true } && HasBox(e);
+    internal static bool HasBox(FigureElement e) => e.Box is { Length: 4 } b && b[2] >= 0 && b[3] >= 0;
+    internal static Rect Box(FigureElement e) => new(e.Box![0], e.Box[1], e.Box[2], e.Box[3]);
+    private static Rect HitBox(FigureElement e) { var b = Box(e); b.Inflate(0.9, 0.9); return b; }
     private static Rect Handle(Rect r) => new(r.Right - HandleSize, r.Bottom - HandleSize, HandleSize, HandleSize);
 
     protected override void OnRender(DrawingContext dc)
@@ -61,15 +71,17 @@ public sealed class FigureCanvas : FrameworkElement
         dc.DrawRectangle(bg, null, page);
         foreach (var e in figure.Elements ?? [])
         {
-            Vector shift = IsDragging && !resizing && e.Oid == selected ? delta : default;
+            bool moving = IsDragging && !resizing && (selected.Contains(e.Oid) || e.Parent is { } id && selected.Contains(id));
+            Vector shift = moving ? delta : default;
             DrawSprite(dc, e.Sprite, shift);
         }
-        foreach (var label in figure.Labels ?? []) DrawSprite(dc, label.Sprite, default);
-        if (Selection is { } active)
+        foreach (var label in figure.Labels ?? [])
+            DrawSprite(dc, label.Sprite, IsDragging && !resizing && label.Panel is { } id && selected.Contains(id) ? delta : default);
+        foreach (var active in Selections.Where(CanHit))
         {
             Rect selectionBox = DragBox(active);
             dc.DrawRectangle(null, SelectionPen, selectionBox);
-            dc.DrawRectangle(Accent, null, Handle(selectionBox));
+            if (selected.Length == 1 && Resizable(active)) dc.DrawRectangle(Accent, null, Handle(selectionBox));
         }
         dc.Pop();
     }
@@ -99,10 +111,19 @@ public sealed class FigureCanvas : FrameworkElement
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         Point p = e.GetPosition(this);
-        resizing = Selection is { } current && Handle(Box(current)).Contains(p);
+        resizing = Selection is { } current && Resizable(current) && Handle(Box(current)).Contains(p);
         if (!resizing)
-            Select(figure?.Elements?.LastOrDefault(el => Editable(el) && Box(el).Contains(p))?.Oid);
-        if (selected is not null && CaptureMouse()) { start = p; delta = default; }
+        {
+            var hit = figure?.Elements?.LastOrDefault(el => CanHit(el) && el.Props is not { Locked: true } && HitBox(el).Contains(p));
+            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0)
+            {
+                if (hit is not null) SelectIds(selected.Contains(hit.Oid) ? selected.Where(id => id != hit.Oid) : selected.Append(hit.Oid));
+                e.Handled = true;
+                return;
+            }
+            if (hit is null || !selected.Contains(hit.Oid)) Select(hit?.Oid);
+        }
+        if (selected.Length > 0 && Selections.All(Movable) && CaptureMouse()) { start = p; delta = default; }
         InvalidateVisual();
         e.Handled = true;
     }
@@ -111,19 +132,19 @@ public sealed class FigureCanvas : FrameworkElement
     {
         Point p = e.GetPosition(this);
         if (start is { } from) { delta = p - from; InvalidateVisual(); }
-        Cursor = (IsDragging && resizing) || (Selection is { } active && Handle(Box(active)).Contains(p))
-            ? Cursors.SizeNWSE : IsDragging || (figure?.Elements?.Any(el => Editable(el) && Box(el).Contains(p)) ?? false)
+        Cursor = (IsDragging && resizing) || (Selection is { } active && Resizable(active) && Handle(Box(active)).Contains(p))
+            ? Cursors.SizeNWSE : IsDragging || (figure?.Elements?.Any(el => Movable(el) && HitBox(el).Contains(p)) ?? false)
                 ? Cursors.SizeAll : Cursors.Arrow;
     }
 
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         CanvasEdit? edit = null;
-        if (start is { } from && Selection is { } active)
+        if (start is { } from)
         {
             delta = e.GetPosition(this) - from;
             if (Math.Abs(delta.X) >= 0.15 || Math.Abs(delta.Y) >= 0.15)
-                edit = new(active.Oid, resizing ? DragBox(active) : null, delta);
+                edit = new(selected, resizing && Selection is { } active ? DragBox(active) : null, delta);
         }
         start = null;
         ReleaseMouseCapture();
@@ -147,4 +168,4 @@ public sealed class FigureCanvas : FrameworkElement
     }
 }
 
-internal sealed record CanvasEdit(string Oid, Rect? NewBox, Vector Delta);
+internal sealed record CanvasEdit(string[] Oids, Rect? NewBox, Vector Delta);
