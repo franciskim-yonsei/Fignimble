@@ -14,6 +14,8 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 from . import mirror, remote, templates
 from .core import Session
 
@@ -99,6 +101,7 @@ def main():
         "redo": lambda a: need().redo_(a),
         "export": lambda a: need().export(a),
         "export_table": lambda a: need().export_table(a),
+        "export_source_data": lambda a: need().export_source_data(a),
         "remote_hosts": lambda a: {"hosts": __import__("fignimble.remote", fromlist=["hosts"]).hosts()},
         "remote_list": remote_list,
         "import_remote": lambda a: need().import_remote(a),

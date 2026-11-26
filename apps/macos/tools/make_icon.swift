@@ -13,7 +13,15 @@ func png(_ px: Int, _ name: String) {
   NSGraphicsContext.saveGraphicsState()
   NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
   NSGraphicsContext.current?.imageInterpolation = .high
-  img.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+  // the macOS icon grid: the rounded square (120 of the SVG's 128 units) is 824 of 1024 pixels, centred, with a
+  // soft shadow below it, so the icon sits the size of the others in the Dock and Finder
+  let side = CGFloat(px) * 824 / 1024 * 128 / 120
+  let shadow = NSShadow()
+  shadow.shadowColor = NSColor(white: 0, alpha: 0.3)
+  shadow.shadowOffset = NSSize(width: 0, height: -CGFloat(px) * 10 / 1024)
+  shadow.shadowBlurRadius = CGFloat(px) * 12 / 1024
+  shadow.set()
+  img.draw(in: NSRect(x: (CGFloat(px) - side) / 2, y: (CGFloat(px) - side) / 2, width: side, height: side))
   NSGraphicsContext.restoreGraphicsState()
   try! rep.representation(using: .png, properties: [:])!.write(to: set.appendingPathComponent(name))
 }

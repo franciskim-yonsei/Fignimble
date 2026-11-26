@@ -49,9 +49,12 @@ own.
 
 `Style.journal("cell")` and `Labels.journal("cell")` set what the journal asks for: font and sizes, the panel label
 convention, the minimum text size and resolutions. The inspector's **Width for a journal…** menu sets the figure to
-one of its column widths. Fignimble has 40 presets, computational biology's especially: the Nature Portfolio, Cell
+one of its column widths. Fignimble has 71 presets, computational biology's especially: the Nature Portfolio, Cell
 Press, PLOS, Oxford, BMC, Genome Research, Molecular Systems Biology, eLife, Frontiers, IEEE/ACM TCBB, Science and
-PNAS. See [journal presets](../reference/journals.md), and check the journal's current guidelines before
+PNAS. For chemistry and materials science there are ACS journals (JACS, ACS Nano, Nano Letters, Chemistry of
+Materials…), RSC journals (Chemical Science, ChemComm, Journal of Materials Chemistry A…), Elsevier journals (Materials
+Today, Acta Materialia, Carbon…) and Wiley journals (Advanced Materials, Advanced Functional Materials, Angewandte
+Chemie…). See [journal presets](../reference/journals.md), and check the journal's current guidelines before
 submitting.
 
 For a poster, `Style.poster("a0")` sets type sizes meant to be read from a meter or two (28 pt text on A0, 22 pt on

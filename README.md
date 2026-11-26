@@ -178,12 +178,18 @@ fingerprint of each file it was made from; `fignimble provenance poster.pdf` che
 - **One style for every panel.** `Style` (font, text size, line widths, despined axes) is applied to all panels, so
   plots made at different times match. `Style.journal("nature")` sets the journal's font, sizes and label convention.
 - **Preflight.** Every render checks what a production office would: text below the minimum size (inside panels too),
-  pictures below 300 dpi at their printed size, Type 3 fonts, elements outside the figure, duplicate labels, and
-  whether the width matches the journal's columns.
-- **40 journals**, computational biology's especially: the Nature Portfolio (Nature Methods, Nature
+  pictures below 300 dpi at their printed size, Type 3 fonts, elements outside the figure, duplicate labels, colors
+  color-blind readers confuse (and, as notes, colors that print alike in grayscale), scale bars without a pixel size,
+  and whether the width matches the journal's columns.
+- **Source data.** File ▸ Export Source Data… (`fignimble source-data fig1.py`) writes the values plotted in each
+  panel to a spreadsheet, one sheet per panel, as journals ask: lines, points, bars with their error bars, heatmaps,
+  read back from what the panel drew, or from a `source_data()` function next to the panel's `draw()`.
+- **71 journals**, computational biology's especially: the Nature Portfolio (Nature Methods, Nature
   Communications, Scientific Reports…), Cell Press (Cell Systems, Cell Genomics, Patterns…), PLOS (Computational
   Biology, ONE…), Oxford (Bioinformatics, NAR, Briefings in Bioinformatics, GigaScience…), BMC (Genome Biology, BMC
-  Bioinformatics…), Genome Research, Molecular Systems Biology, eLife, Frontiers, IEEE/ACM TCBB, Science, PNAS. Each
+  Bioinformatics…), Genome Research, Molecular Systems Biology, eLife, Frontiers, IEEE/ACM TCBB, Science, PNAS; and
+  chemistry and materials journals from ACS (JACS, ACS Nano, Nano Letters…), the RSC (Chemical Science, Journal of
+  Materials Chemistry A…), Elsevier (Materials Today, Acta Materialia…) and Wiley (Advanced Materials, Angewandte…). Each
   sets the figure widths, font sizes, panel label style and resolutions; `fignimble journals` lists them, with where
   each number comes from (the journal's guidelines, summaries of them, or the publisher's usual values). Check the
   journal's current guidelines before submitting.

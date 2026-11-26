@@ -16,8 +16,11 @@ color on the screen.
 ## Color vision
 
 Preflight warns when two colors of a panel, or of the annotations, that most people tell apart look alike to readers
-with deuteranopia, protanopia or tritanopia. **View ▸ Color Vision** shows the whole figure as those readers would
-see it, or as a grayscale print.
+with deuteranopia, protanopia or tritanopia. It also notes colors that look alike printed in grayscale. That is a
+note, not a warning: palettes made for color-blind readers, Okabe-Ito included, have colors of the same lightness, and
+most figures are read in color. If yours may be printed in black and white, tell those apart by lightness, markers,
+line styles or labels. **View ▸ Color Vision** shows the whole figure as those readers would see it, or as a
+grayscale print.
 
 <img class="fg-shot" src="../../assets/colour-vision.jpg" alt="The figure shown as a reader with deuteranopia sees it">
 

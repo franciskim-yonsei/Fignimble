@@ -23,6 +23,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 cp "$ROOT/.build/universal/Fignimble" "$APP/Contents/MacOS/Fignimble"
 rsync -a --exclude __pycache__ "$ROOT/../../engine/" "$APP/Contents/Resources/engine/"
+# Nothing may write into the signed bundle once it is built: the app and bin/fignimble start Python with
+# PYTHONDONTWRITEBYTECODE, and this stops the build if anything compiled has crept in.
+if find "$APP" -name __pycache__ -o -name "*.pyc" | grep -q .; then echo "compiled Python in $APP" >&2; exit 1; fi
 install -m 755 "$ROOT/../../bin/fignimble" "$APP/Contents/Resources/bin/fignimble"
 rsync -a "$ROOT/../../skills/" "$APP/Contents/Resources/skills/"   # agent skills, for `fignimble install-skills`
 cp "$ROOT/assets/biocartoon.png" "$ROOT/assets/biocartoon-mono.png" "$APP/Contents/Resources/"   # BioCartoon's logos (from Manimble)

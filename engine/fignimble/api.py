@@ -768,12 +768,14 @@ class Figure:
         e.source, e.target = source, target
         return e
 
-    def scalebar(self, image, length: float, unit: str = "µm", pixel_size: float = 1.0, corner: str = "lower right",
+    def scalebar(self, image, length: float, unit: str = "µm", pixel_size: float | None = None, corner: str = "lower right",
                  x: float | None = None, y: float | None = None, margin: float = 1.5, color: str = "#FFFFFF",
                  thickness: float = 0.6, size: float | None = None, label: bool = True, group: str | None = None,
                  name: str | None = None, locked: bool = False, hidden: bool = False) -> Element:
         """A scale bar on a picture: `length` in `unit`, where one pixel of the original picture is `pixel_size`
-        units (e.g. 0.325 µm). It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
+        units (e.g. 0.325 µm). Without `pixel_size`, it comes from the picture's metadata (OME-TIFF, ImageJ TIFF, or
+        a TIFF, PNG or JPEG resolution of microscope pixels); preflight warns when there is none, and when a given
+        `pixel_size` disagrees with the metadata. `unit` is µm, nm, mm, cm, m or Å for the metadata to apply. It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
         `margin` mm in, or at (x, y), fractions of the picture's box for the bar's left end. `thickness` in mm."""
         e = self._add("scalebar", "scalebar", dict(length=length, unit=unit, pixel_size=pixel_size, corner=corner,
                                                     x=x, y=y, margin=margin, color=color, thickness=thickness,

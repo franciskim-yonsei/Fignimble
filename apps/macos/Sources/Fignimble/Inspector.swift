@@ -612,7 +612,18 @@ final class Inspector: NSView {
         case "scalebar":
             section("Scale bar")
             row([("Length", numberField(e.p("length"), width: 50) { setp(["length": $0]) }), ("", Field(e.s("unit") ?? "µm", width: 40) { setp(["unit": $0]) })])
-            row([("One pixel is", numberField(e.p("pixel_size"), width: 60) { setp(["pixel_size": $0]) }), (e.s("unit") ?? "µm", NSView())])
+            // empty: the picture's metadata gives the pixel size
+            let px = Field(e.p("pixel_size").map { String(format: "%g", $0) } ?? "", width: 60) { s in
+                let t = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+                if t.isEmpty { setp(["pixel_size": NSNull()]) } else if let d = Double(t) { setp(["pixel_size": d]) }
+            }
+            if e.p("pixel_size") == nil, let v = e.pixelSize, e.pixelFrom != "not set" { px.placeholderString = String(format: "%g", v) }
+            row([("One pixel is", px), (e.s("unit") ?? "µm", NSView())])
+            switch e.pixelFrom {
+            case "not set"?: note("No pixel size: the picture's metadata has none. Enter it from the microscope.")
+            case let f? where f.hasPrefix("from "): note("Pixel size \(f). Type a number to override it.")
+            default: break
+            }
             row([("Corner", popup(["lower right", "lower left", "upper right", "upper left"], e.s("corner"), width: 110) { _, t in
                 setp(["corner": t, "x": NSNull(), "y": NSNull()]) })])
             row([("Color", color(e.s("color")) { setp(["color": $0]) }), ("", check("Label", e.props["label"] as? Bool ?? true) { setp(["label": $0]) })])

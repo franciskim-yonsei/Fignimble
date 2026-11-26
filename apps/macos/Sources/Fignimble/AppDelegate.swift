@@ -146,7 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       item("Show Project in Finder", #selector(MainController.revealProject(_:))), sep(),
                       item("Export Figure…", #selector(MainController.exportFigure(_:)), "e"),
                       item("Export All Figures as PDF…", #selector(MainController.exportAll(_:)), "e", [.command, .shift]),
-                      item("Export Table…", #selector(MainController.exportTable(_:))), sep(),
+                      item("Export Table…", #selector(MainController.exportTable(_:))),
+                      item("Export Source Data…", #selector(MainController.exportSourceData(_:))), sep(),
                       item("Close", #selector(NSWindow.performClose(_:)), "w", to: nil)])
         menu("Edit", [item("Undo", #selector(MainController.undoEdit(_:)), "z"),
                       item("Redo", #selector(MainController.redoEdit(_:)), "z", [.command, .shift]), sep(),

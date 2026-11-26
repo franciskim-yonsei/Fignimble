@@ -401,7 +401,10 @@ def test_palettes_and_color_vision(session):
     assert 'palette="okabe-ito"' in (session.project / "style.py").read_text()
     r = session.render("fig1")
     assert r["style"]["palette"][0] == ["0", "#E69F00"]
-    assert not any("look alike" in w["message"] and w["oid"] == "0" for w in r["warnings"])
+    assert not any("look alike" in w["message"] and w["oid"] == "0" and w["level"] == "warning" for w in r["warnings"])
+    # Okabe-Ito has colors of the same lightness: a note (not a warning) that they print alike in grayscale
+    gray = [w for w in r["warnings"] if w["oid"] == "0" and "in grayscale" in w["message"]]
+    assert gray and all(w["level"] == "info" for w in gray)
     session.undo({"figure": "fig1"})
 
 

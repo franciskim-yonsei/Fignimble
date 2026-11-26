@@ -135,6 +135,28 @@ extension MainController {
         }
     }
 
+    /// File ▸ Export Source Data…: the values plotted in each panel, one sheet per panel, as journals ask for.
+    @objc func exportSourceData(_ sender: Any?) {
+        guard let name = current, figure != nil else { return }
+        let p = NSSavePanel()
+        p.allowedContentTypes = [UTType(filenameExtension: "xlsx") ?? .data]
+        p.nameFieldStringValue = name + "_source_data.xlsx"
+        p.message = "The values plotted in each panel, one sheet per panel. A panel's source_data() function supplies its own."
+        if let proj = project { p.directoryURL = URL(fileURLWithPath: proj) }
+        p.beginSheetModal(for: window) { [weak self] r in
+            guard let self, r == .OK, let u = p.url else { return }
+            self.enqueue { [weak self] in guard let self else { return }
+                self.busy("Writing source data…")
+                do {
+                    let r = try await self.engine.json("export_source_data", ["figure": name, "path": u.path])
+                    self.idle()
+                    let n = (r["panels"] as? [Any])?.count ?? 0
+                    toast("Exported \(u.lastPathComponent): \(n) panel\(n == 1 ? "" : "s")")
+                } catch { self.idle(); toast(error.localizedDescription, error: true) }
+            }
+        }
+    }
+
     // MARK: panels from an SSH server
 
     @objc func insertRemotePanel(_ sender: Any?) {

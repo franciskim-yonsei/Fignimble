@@ -1,6 +1,6 @@
 {
   "name": "fignimble",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Skills for Fignimble: build multi-panel figures from data or notebooks, restyle them for a journal, fix preflight, export, and make posters from a paper's figures.",
   "author": {
     "name": "Pachter Lab",

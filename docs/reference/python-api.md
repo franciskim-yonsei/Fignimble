@@ -15,7 +15,8 @@ A figure (or a poster): its size (mm), its style, and the elements placed on it.
 width, height  in mm. With `journal` (and `columns`) and no width, the journal's column width.
 style          a Style shared by every panel (font, sizes, labels); `labels` overrides its Labels
 background     page color ("#FFFFFF"), or None for transparent
-poster         a poster size ("a0", "a1", "a2", "36x48", "42x56", "24x36"; see fignimble.journals.POSTERS):
+poster         a poster size ("a0", "a1", "b1", "24x36", "36x48", "48x36" (turned), "72x48", ...; see
+               fignimble.journals.POSTERS and POSTER_TEMPLATES):
                the figure is that size (`landscape=True` turns it), its style is Style.poster(poster) unless
                one is given, and preflight keeps `margin` mm along the edges clear (the preset's by default)
 
@@ -172,11 +173,13 @@ magnified view shows.
 ### fig.scalebar
 
 ```python
-fig.scalebar(image, length: 'float', unit: 'str' = 'µm', pixel_size: 'float' = 1.0, corner: 'str' = 'lower right', x: 'float | None' = None, y: 'float | None' = None, margin: 'float' = 1.5, color: 'str' = '#FFFFFF', thickness: 'float' = 0.6, size: 'float | None' = None, label: 'bool' = True, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
+fig.scalebar(image, length: 'float', unit: 'str' = 'µm', pixel_size: 'float | None' = None, corner: 'str' = 'lower right', x: 'float | None' = None, y: 'float | None' = None, margin: 'float' = 1.5, color: 'str' = '#FFFFFF', thickness: 'float' = 0.6, size: 'float | None' = None, label: 'bool' = True, group: 'str | None' = None, name: 'str | None' = None, locked: 'bool' = False, hidden: 'bool' = False) -> 'Element'
 ```
 
 A scale bar on a picture: `length` in `unit`, where one pixel of the original picture is `pixel_size`
-units (e.g. 0.325 µm). It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
+units (e.g. 0.325 µm). Without `pixel_size`, it comes from the picture's metadata (OME-TIFF, ImageJ TIFF, or
+a TIFF, PNG or JPEG resolution of microscope pixels); preflight warns when there is none, and when a given
+`pixel_size` disagrees with the metadata. `unit` is µm, nm, mm, cm, m or Å for the metadata to apply. It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
 `margin` mm in, or at (x, y), fractions of the picture's box for the bar's left end. `thickness` in mm.
 
 ### fig.layout

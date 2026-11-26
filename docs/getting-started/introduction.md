@@ -48,10 +48,13 @@ fig.qr("https://github.com/pachterlab/Fignimble", x=740, y=1090, w=80)
 - **Automatic panel letters**, in reading order, re-lettered when panels move, styled once for every figure.
 - **Panels that redraw at their size**, so their text and lines are the size the journal sees.
 - **One style for every panel**: font, text size, line widths and colors, set in `style.py`.
-- **Journal presets** for 40 journals: column widths, fonts, label convention and the resolutions they require.
+- **Journal presets** for 71 journals, in biology, chemistry and materials science: column widths, fonts, label
+  convention and the resolutions they require.
 - **Plot areas that line up** across a row or column, whatever the tick labels, as
   [patchwork](https://patchwork.data-imaginist.com) does for ggplot.
-- **Preflight**: small text, low-resolution pictures, colors color-blind readers confuse, elements off the page.
+- **Preflight**: small text, low-resolution pictures, colors color-blind readers confuse or that print alike in
+  grayscale, scale bars without a pixel size, elements off the page.
+- **Source data**: the values plotted in each panel, one spreadsheet sheet per panel, as journals ask.
 - **Export** to vector PDF, EPS and SVG with real text, to TIFF, PNG and JPEG at the journal's resolution, and to
   PowerPoint; tables export as Word or Excel.
 - **A dark version** of every figure for talks, from the same code.

@@ -307,7 +307,7 @@ use `"white" if is_dark() else "black"` (from fignimble) wherever you would writ
 
 Annotations: `fig.text("**bold** *italic* 10^{3} CD8_{a}", width=60)` (markup; `width` wraps), `fig.arrow(...,
 curve=0.3, tip="stealth")`, `fig.path(points, smooth=True, closed=True, fill=...)`, `fig.scalebar(picture, length=50,
-unit="µm", pixel_size=0.325)`, `fig.zoom(picture, inset, region=(x, y, w, h))` (fractions; the inset of the same
+unit="µm")` (the pixel size from the picture's metadata, or `pixel_size=0.325` from the microscope), `fig.zoom(picture, inset, region=(x, y, w, h))` (fractions; the inset of the same
 picture is cropped to the region). Pictures take `rotation=` and `flip="h"`. `Style(palette={"WT": "#999999", ...})`
 sets the colors panels plot with (or a named one: `palette="okabe-ito"`, color-blind safe); use `color("WT")` in
 panel code rather than repeating hex codes, and keep color-blind readers in mind (`fignimble info` warns about colors
@@ -362,6 +362,10 @@ for every argument.
   version, `--journal cell` for that journal's resolutions; TIFF/JPEG are raised to them and every export is measured).
   Don't run other renderers. Each export records what it was made from; `fignimble provenance fig1.pdf` checks it
   against the project.
+- `fignimble source-data fig1.py` writes the values plotted in each panel to `fig1_source_data.xlsx`, one sheet per
+  panel, as journals ask. A panel whose plotted values can't be read back (shaded areas, violins, huge heatmaps)
+  supplies them with a `source_data(...)` function next to `draw` (`<name>_source_data` for a panel function
+  `<name>`), taking the same arguments and returning a DataFrame, a dict of them, or rows.
 
 ## Keep the figures editable by hand
 

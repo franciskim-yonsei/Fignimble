@@ -52,7 +52,7 @@ command runs the figure and panel code the way Fignimble does.
   file can draw several panels.
 - **`style.py`** holds the `Style` every figure imports: font, text size, line widths, palette, and the `Labels`
   (a, b, c...). `Style.journal("cell")` and `Labels.journal("cell")` take a journal's rules; `fignimble journals` lists
-  the 40 journals and the poster sizes.
+  the 71 journals (biology, chemistry, materials science) and the poster sizes.
 - `images/` holds pictures, `data/` data, `tables/` CSV tables, `requirements.txt` the packages panels import beyond
   matplotlib and NumPy. `.fignimble/` is Fignimble's cache: never edit it.
 - `fignimble new --journal nature` (or `--poster a0`) makes a new project in a folder called `fignimble`
@@ -117,7 +117,8 @@ sizes. Prefer a layout for regular grids of plots, and free `fig.panel(...)` for
   `height=` reports overflow and `fit="shrink"` fits it.
 - `fig.arrow(..., curve=0.3, tip="stealth")`, `fig.path(points, smooth=True, closed=True, fill=...)`.
 - Pictures (PNG, TIFF, JPEG, PDF, SVG) take `rotation=`, `flip="h"`, `crop=(left, top, right, bottom)` fractions;
-  `fig.scalebar(picture, length=50, unit="µm", pixel_size=0.325)`; `fig.zoom(picture, inset, region=(x, y, w, h))`.
+  `fig.scalebar(picture, length=50, unit="µm")` (pixel size from the picture's metadata; else
+  `pixel_size=0.325` from the microscope); `fig.zoom(picture, inset, region=(x, y, w, h))`.
 - `Style(palette="okabe-ito")` (color-blind safe) or `palette={"WT": "#999999", "KO": "#d1495b"}` sets the colors
   panels plot with; use `color("KO")` in panel code instead of repeating hex codes.
 - Every figure has a **dark version** (`fignimble snapshot fig1.py --dark`): wherever panel code would write black,
@@ -187,15 +188,20 @@ Look at the snapshot yourself before saying a figure is done: overlapping labels
 and a panel drawn red (its error) only show up there. `info` prints a failing panel's traceback; fix the code.
 Preflight warns about text below the journal's minimum size (inside panels too), pictures under 300 dpi at their
 printed size, elements outside the figure, overlapping panels, letters drawn inside a panel or typed with `fig.text`,
-text in a font other than the style's, colors color-blind readers can't tell apart, and widths that miss the
-journal's columns.
+text in a font other than the style's, colors color-blind readers can't tell apart (and, as notes, colors that print
+alike in grayscale), scale bars without a pixel size, and widths that miss the journal's columns.
 
 ```bash
 fignimble export fig1.py fig1.pdf                  # PDF, EPS, SVG, TIFF, PNG, JPEG, PPTX
 fignimble export fig1.py fig1.tiff --journal cell  # that journal's resolutions; every export is measured
 fignimble export fig1.py fig1-dark.pdf --dark      # the dark version, for talks
 fignimble provenance fig1.pdf                      # what an export was made from, checked against the project
+fignimble source-data fig1.py                      # the values plotted in each panel, one sheet per panel (.xlsx)
 ```
+
+A panel whose values can't be read back from its drawing (shaded areas, violins) supplies its source data with a
+`source_data(...)` function next to `draw` (`<name>_source_data` for a panel function `<name>`), taking the same
+arguments and returning a DataFrame, a dict of them, or rows.
 
 ## Telling the user
 

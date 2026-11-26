@@ -195,6 +195,7 @@ class Renderer:
         for d in ("pieces", "sprites", "out", "images"):
             (self.cache / d).mkdir(parents=True, exist_ok=True)
         self._docs: dict[str, pymupdf.Document] = {}
+        self.jobs, self.rc, self.nested = [], None, {}   # the last figure's panels, as pieces() drew them
         self._cwd = Path.cwd()                   # rendering moves into the project; relative paths mean this one
         self.dark = False
         self.raster_dpi = 600                    # what panels draw their rasters at (imshow, rasterized scatters)
@@ -650,6 +651,7 @@ class Renderer:
         self._stack.append(path)
         try:
             sp, sinfos, slabels = self.pieces(sub)
+            self.nested[oid] = (path.name, self.jobs, self.rc, slabels)     # for source data
             said = self.preflight(sub, sp, sinfos, slabels)
         finally:
             self._stack.pop()
@@ -987,6 +989,8 @@ class Renderer:
                     info["host"] = oids.get(id(host))
                     info["anchor"] = pc.meta["anchor"]
                     info["dest"] = [round(v, 4) for v in dests[id(host)]]
+                    info["pixelSize"] = round(pc.meta["pixel_size"], 6)
+                    info["pixelFrom"] = pc.meta["pixel_from"]
                     steps.append(pc)
                 elif e.kind == "bracket":
                     size = p["size"] or style.size
@@ -1034,6 +1038,7 @@ class Renderer:
                 w, h = h, w                             # drawn upright, then turned into its box
             j["size"] = (w, h)
             j["base"] = self._panel_base(j["props"], w, h, rc, deps, j["collect"], j["background"])
+        self.jobs, self.rc = jobs, rc                   # the panels and how they were drawn, for source data
         targets = _align_targets(jobs) if jobs else {}
         pieces = []
         for s_ in steps:
@@ -1181,10 +1186,32 @@ class Renderer:
         return Piece(oid, "zoom", box, key, draw, pad=p["width"] / MM), reg
 
     def _scalebar_piece(self, oid, p, dest, meta, family, style) -> Piece:
-        """A scale bar on a picture: its length from the picture's pixels and `pixel_size`."""
+        """A scale bar on a picture: its length from the picture's pixels and `pixel_size`, or, without one, the
+        pixel size in the picture's metadata. Preflight hears of a bar with neither, or one that disagrees."""
         pw = meta["px"][0]
         mm_per_px = dest[2] / pw
-        bar = p["length"] / p["pixel_size"] * mm_per_px
+        name = Path(meta["source"]).name
+        found = pixel_size_of(meta["source"])
+        per_unit = UNITS_M.get(_unit_key(p["unit"]))
+        from_meta = found[0] / per_unit if found and per_unit else None    # in the bar's unit
+        checks = []
+        px_size = p["pixel_size"]
+        if px_size is None and from_meta:
+            px_size, how = from_meta, f"from {name}'s {found[1]} metadata"
+        elif px_size is None:
+            px_size, how = 1.0, "not set"
+            checks.append({"level": "warning", "message": (
+                f"the pixel size isn't given and {name} has none in its metadata"
+                + ("" if per_unit else f" that converts to {p['unit']}")
+                + f", so the bar assumes one pixel is 1 {p['unit']}: give pixel_size= (from the microscope)")})
+        else:
+            how = "given"
+            if from_meta and abs(px_size - from_meta) > 0.01 * from_meta:
+                checks.append({"level": "warning", "message": (
+                    f"pixel_size={px_size:g} {p['unit']}, but {name}'s {found[1]} metadata says one pixel is "
+                    f"{from_meta:.4g} {p['unit']}; check which is right (a picture resized after it was taken "
+                    f"keeps metadata that no longer fits)")})
+        bar = p["length"] / px_size * mm_per_px
         size = p["size"] or style.size
         label = f"{p['length']:g} {p['unit']}"
         tpdf, tw, th = (self.text_piece(label, size, "bold", "normal", p["color"], 0, family, "center", keep_color=True)
@@ -1210,7 +1237,8 @@ class Renderer:
             if tpdf:
                 cx = x0 + bar / 2 * MM
                 self._show_pdf(tpdf, page, pymupdf.Rect(cx - tw / 2 * MM, oy, cx + tw / 2 * MM, oy + th * MM))
-        return Piece(oid, "scalebar", box, key, draw, meta={"size": size, "bar": bar, "anchor": [round(bx, 4), round(by, 4)]})
+        return Piece(oid, "scalebar", box, key, draw, meta={"size": size, "bar": bar, "anchor": [round(bx, 4), round(by, 4)],
+                                                            "pixel_size": px_size, "pixel_from": how, "checks": checks})
 
     def _labels(self, fig, panels, family):
         lab = fig.labels
@@ -1397,6 +1425,8 @@ class Renderer:
                 return f"figure {Path(info['props']['source']).name}"
             if info and info["kind"] == "qr":
                 return "the QR code"
+            if info and info["kind"] == "scalebar":
+                return f"the scale bar on {who(info['host'])}" if info.get("host") else "a scale bar"
             return f"{info['kind'] if info else 'element'} {oid}"
 
         for info in infos:
@@ -1412,6 +1442,8 @@ class Renderer:
             if pc.kind in ("text", "label", "bracket", "table") and m.get("size", 99) < min_font - 1e-6:
                 warn.append({"level": "warning", "oid": pc.oid,
                              "message": f"{who(pc.oid)}: {m['size']:g} pt text is below the {min_font:g} pt minimum"})
+            for w_ in m.get("checks") or []:            # a piece's own findings (a scale bar's pixel size)
+                warn.append({**w_, "oid": pc.oid, "message": f"{who(pc.oid)}: {w_['message']}"})
             for w_ in m.get("nested") or []:            # from inside a figure placed whole
                 warn.append({**w_, "oid": pc.oid, "message": f"{who(pc.oid)}: {w_['message']}"})
             if m.get("pdf") and pc.kind in ("panel", "image", "figure"):
@@ -2896,11 +2928,62 @@ def _measure_marks(fig, h) -> list:
     return out[:600]
 
 
+# a picture's pixel size, for scale bars: lengths in metres
+UNITS_M = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "µm": 1e-6, "nm": 1e-9, "Å": 1e-10, "pm": 1e-12, "in": 0.0254}
+_UNIT_NAMES = {"um": "µm", "μm": "µm", "micron": "µm", "microns": "µm", "micrometer": "µm", "micrometre": "µm",
+               "\\u00b5m": "µm", "nanometer": "nm", "nanometre": "nm", "millimeter": "mm", "millimetre": "mm",
+               "centimeter": "cm", "centimetre": "cm", "meter": "m", "metre": "m", "a": "Å", "angstrom": "Å",
+               "ångström": "Å", "inch": "in"}
+
+
+def _unit_key(unit: str) -> str:
+    u = (unit or "").strip()
+    return _UNIT_NAMES.get(u.lower(), u.replace("μ", "µ")) if u not in UNITS_M else u
+
+
+def pixel_size_of(path) -> tuple[float, str] | None:
+    """The size of one pixel of a picture, in metres, from its metadata, and where it came from: an OME-TIFF's
+    PhysicalSizeX, an ImageJ TIFF's resolution and unit, or a TIFF, PNG or JPEG resolution too fine to be a print
+    resolution (pixels under 2.5 µm; 300 dpi is a print resolution, not the size of what was imaged). None if none."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            tags = getattr(im, "tag_v2", None) or {}
+            desc = tags.get(270) or ""
+            if isinstance(desc, bytes):
+                desc = desc.decode("utf-8", "replace")
+            if "PhysicalSizeX=" in desc:                     # OME-XML
+                m = re.search(r'PhysicalSizeX="([0-9.eE+-]+)"', desc)
+                u = re.search(r'PhysicalSizeXUnit="([^"]+)"', desc)
+                f = UNITS_M.get(_unit_key(u.group(1) if u else "µm"))
+                if m and f and float(m.group(1)) > 0:
+                    return float(m.group(1)) * f, "OME-TIFF"
+            xres = tags.get(282)
+            xres = float(xres) if xres else 0.0
+            if desc.startswith("ImageJ=") and xres > 0:
+                u = re.search(r"^unit=(.+)$", desc, re.M)
+                f = UNITS_M.get(_unit_key(u.group(1).strip() if u else ""))
+                if f:
+                    return f / xres, "ImageJ"
+            per_m = 0.0
+            if xres > 0 and tags.get(296) in (2, 3):         # ResolutionUnit: inch, centimetre
+                per_m = xres / (0.0254 if tags.get(296) == 2 else 0.01)
+            elif im.format in ("PNG", "JPEG") and im.info.get("dpi"):
+                per_m = float(im.info["dpi"][0]) / 0.0254
+            if per_m > 1 / 2.5e-6:
+                return 1 / per_m, f"{im.format} resolution"
+    except Exception:                                        # noqa: BLE001
+        return None
+    return None
+
+
 # color vision deficiencies (Machado et al. 2009, severity 1), applied in linear RGB
 _CVD = {
     "deuteranopia": ((0.367322, 0.860646, -0.227968), (0.280085, 0.672501, 0.047413), (-0.011820, 0.042940, 0.968881)),
     "protanopia": ((0.152286, 1.052583, -0.204868), (0.114503, 0.786281, 0.099216), (-0.003882, -0.048116, 1.051998)),
     "tritanopia": ((1.255528, -0.076749, -0.178779), (-0.078411, 0.930809, 0.147602), (0.004733, 0.691367, 0.303900)),
+    # printed in black and white: the luminance, as the View menu's grayscale preview shows it
+    "grayscale": ((0.2126, 0.7152, 0.0722), (0.2126, 0.7152, 0.0722), (0.2126, 0.7152, 0.0722)),
 }
 
 
@@ -2934,7 +3017,8 @@ def _colorful(c: str) -> bool:
 
 
 def _clashes(colors) -> list:
-    """Pairs of colors that most people tell apart but some can't: [(a, b, [deficiencies])]."""
+    """Pairs of colors that most people tell apart but some can't, or that print alike in grayscale:
+    [(a, b, [deficiencies, and "grayscale"])]."""
     cs = sorted({c.upper() for c in colors if c and _colorful(c)})
     out = []
     for i, a in enumerate(cs):
@@ -2949,19 +3033,33 @@ def _clashes(colors) -> list:
 
 
 def _color_vision(infos, fig) -> list:
-    """Preflight: colors in a panel (or among the annotations) that look alike to color-blind readers."""
+    """Preflight: colors in a panel (or among the annotations) that look alike to color-blind readers (a warning),
+    or only when printed in grayscale (a note: many color-blind-safe palettes have colors of the same lightness)."""
+    def seen(kinds):
+        cvd = [k for k in kinds if k != "grayscale"]
+        return cvd, (", ".join(cvd) + (" and in grayscale" if "grayscale" in kinds else "")) if cvd else "in grayscale"
+
     warn = []
     for info in infos:
         marks = info.get("marks") or []
         if not marks:
             continue
-        for a, b, kinds in _clashes(m["color"] for m in marks)[:3]:
-            warn.append({"level": "warning", "oid": info["oid"], "colors": [a, b],
-                         "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike with "
-                                    f"{', '.join(kinds)}; use a color-blind-safe palette or tell them apart another way"})
+        clashes = sorted(_clashes(m["color"] for m in marks), key=lambda c: c[2] == ["grayscale"])
+        for a, b, kinds in clashes[:3]:
+            cvd, how = seen(kinds)
+            if cvd:
+                warn.append({"level": "warning", "oid": info["oid"], "colors": [a, b],
+                             "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike with {how}; use a "
+                                        f"color-blind-safe palette or tell them apart another way"})
+            else:
+                warn.append({"level": "info", "oid": info["oid"], "colors": [a, b],
+                             "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike in grayscale; if "
+                                        f"the figure may be printed in black and white, tell them apart another way "
+                                        f"(lightness, markers, line styles or labels)"})
     notes = [e["props"].get(k) for e in infos if e["kind"] in ("text", "line", "rect", "ellipse", "path", "bracket")
              for k in ("color", "stroke", "fill") if isinstance(e["props"].get(k), str)]
-    for a, b, kinds in _clashes(notes)[:3]:
-        warn.append({"level": "warning", "oid": None, "colors": [a, b],
-                     "message": f"annotations in {a} and {b} look alike with {', '.join(kinds)}"})
+    for a, b, kinds in sorted(_clashes(notes), key=lambda c: c[2] == ["grayscale"])[:3]:
+        cvd, how = seen(kinds)
+        warn.append({"level": "warning" if cvd else "info", "oid": None, "colors": [a, b],
+                     "message": f"annotations in {a} and {b} look alike {'with ' if cvd else ''}{how}"})
     return warn

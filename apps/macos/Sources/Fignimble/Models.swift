@@ -90,6 +90,9 @@ final class Element {
     let scale: Double?
     /// A text box's height it runs past (mm), and the size it was shrunk to fit (pt).
     let overflow: Double?
+    /// a scale bar's pixel size as drawn, and where it came from ("given", "from x.tif's ImageJ metadata", "not set")
+    let pixelSize: Double?
+    let pixelFrom: String?
     let shrunk: Double?
     /// A table's columns (x, width) and rows (y, height), mm from its top-left corner: where each cell is.
     let gridCols: [(Double, Double)]
@@ -141,6 +144,8 @@ final class Element {
         figureName = d["figure"] as? String
         scale = (d["scale"] as? NSNumber)?.doubleValue
         overflow = (d["overflow"] as? NSNumber)?.doubleValue
+        pixelSize = (d["pixelSize"] as? NSNumber)?.doubleValue
+        pixelFrom = d["pixelFrom"] as? String
         shrunk = (d["shrunk"] as? NSNumber)?.doubleValue
         let g = d["grid"] as? [String: Any]
         gridCols = (g?["cols"] as? [[Any]] ?? []).map { (num($0.first), num($0.count > 1 ? $0[1] : 0)) }

@@ -1110,7 +1110,7 @@ class Session:
             raise EditError("select a picture for the scale bar")
         name = self._name_of(plan, data, info)
         var = srcedit.figure_var(plan.source(data["file"]))
-        props = {"length": 50, "unit": "µm", "pixel_size": 1.0, **a.get("props", {})}
+        props = {"length": 50, "unit": "µm", **a.get("props", {})}      # no pixel_size: the picture's metadata
         self._append(plan, data, srcedit.call_text(var, "scalebar", [srcedit.Raw(name)], props))
         return "Add Scale Bar"
 
@@ -2010,6 +2010,14 @@ class Session:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": path}
+
+    def export_source_data(self, a: dict) -> dict:
+        """The values plotted in each panel of a figure, one sheet per panel: {figure, path} -> {ok, path, sheets,
+        panels}. See sourcedata.py."""
+        with self.render_lock:
+            res = self.worker.request({"cmd": "source_data", "project": str(self.project), "cache": str(self.cache),
+                                       "file": self.figure_file(a["figure"]), "path": a["path"]}, timeout=600)
+        return {"ok": True, **res}
 
     def new_table(self, a: dict) -> dict:
         """A table of the paper in a file of its own: {name, rows, cols, title?} -> {ok, name}. An m x n grid of

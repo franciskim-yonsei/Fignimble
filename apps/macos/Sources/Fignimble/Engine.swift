@@ -121,6 +121,7 @@ final class Engine {
         env["FIGNIMBLE_PYTHON"] = python
         env["MPLBACKEND"] = "Agg"
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"   // no __pycache__ in the signed app bundle
         // ssh to servers through the connection the app logged in with (SSHLogin.swift)
         SSH.makeControlDir()
         env["FIGNIMBLE_SSH_SHARE"] = SSH.controlDir

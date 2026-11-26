@@ -1,4 +1,5 @@
-"""Figure sizes, label conventions and resolutions of journals, the computational biology ones especially.
+"""Figure sizes, label conventions and resolutions of journals: computational biology's especially, and the main
+chemistry and materials journals (ACS, RSC, Elsevier, Wiley).
 
 Widths are in millimeters. `dpi` is the least resolution, as printed, asked of raster figures and of the pictures
 inside vector ones: "photo" for photographs and micrographs alone (halftones), "combination" for pictures with text
@@ -34,6 +35,33 @@ _BMC = {"publisher": "BMC (Springer Nature)", "widths": {"single": 85, "double":
 _AAAS = {"publisher": "AAAS", "widths": {"single": 57, "double": 121, "triple": 184}, "font": "Helvetica",
          "font_size": 7, "min_font": 5, "dpi": {"photo": 300, "combination": 600, "line": 1200},
          "labels": {"case": "upper", "weight": "bold", "size": 9, "format": "{}"}}
+
+# --- chemistry and materials ---
+_ACS_GUIDE = "https://researcher-resources.acs.org/publish/author_guidelines?coden="
+# one column up to 3.33 in (240 pt), two 4.167-7 in (300-504 pt), at most 9.167 in deep with the caption; Helvetica
+# or Arial, no smaller than 4.5 pt printed; 300 dpi color, 600 dpi grayscale, 1200 dpi black-and-white line art
+_ACS = {"publisher": "American Chemical Society", "widths": {"single": 84.6, "double": 177.8}, "font": "Arial",
+        "font_size": 7, "min_font": 4.5, "dpi": {"photo": 300, "combination": 600, "line": 1200},
+        "labels": {"case": "lower", "weight": "bold", "size": 8, "format": "({})"},
+        "note": "one column up to 3.33 in, two 4.17-7 in, at most 9.17 in deep with the caption"}
+# one column 8.3 cm, two 17.1 cm, at most 23.3 cm long; TIFF at 600 dpi or more; Helvetica or Arial
+_RSC = {"publisher": "Royal Society of Chemistry", "widths": {"single": 83, "double": 171}, "font": "Arial",
+        "font_size": 7, "min_font": 5, "dpi": {"photo": 600, "combination": 600, "line": 600},
+        "labels": {"case": "lower", "weight": "normal", "size": 8, "format": "({})"}, "checked": "secondary",
+        "note": "one column 8.3 cm, two 17.1 cm, at most 23.3 cm long; at least 600 dpi",
+        "source": "https://www.rsc.org/journals-books-databases/author-and-reviewer-hub/authors-information/prepare-and-format/figures-graphics-images"}
+# 90, 140 or 190 mm wide; 300 dpi halftones, 500 combinations, 1000 line art; 7 pt text, sub- and superscripts at 6
+_ELSEVIER = {"publisher": "Elsevier", "widths": {"single": 90, "one-and-a-half": 140, "double": 190}, "font": "Arial",
+             "font_size": 7, "min_font": 6, "dpi": {"photo": 300, "combination": 500, "line": 1000},
+             "labels": {"case": "lower", "weight": "normal", "size": 8, "format": "({})"}, "checked": "guidelines",
+             "source": "https://www.elsevier.com/authors/policies-and-guidelines/artwork-and-media-instructions/artwork-sizing"}
+# 80-180 mm wide at 300-600 dpi: 300 for photographs, 600 for line art and combinations. Wiley-VCH's materials and
+# chemistry journals letter panels a), b), ...
+_WILEY = {"publisher": "Wiley", "widths": {"single": 85, "double": 180}, "font": "Arial", "font_size": 7, "min_font": 5,
+          "dpi": {"photo": 300, "combination": 600, "line": 600},
+          "labels": {"case": "lower", "weight": "bold", "size": 8, "format": "{})"}, "checked": "publisher",
+          "note": "80-180 mm wide, 300 dpi for photographs and 600 dpi for line art",
+          "source": "https://authors.wiley.com/author-resources/Journal-Authors/Prepare/manuscript-preparation-guidelines.html/figure-preparation.html"}
 
 
 def _j(base: dict, name: str, **kw) -> dict:
@@ -122,6 +150,41 @@ JOURNALS = {
                   "labels": {"case": "lower", "weight": "normal", "size": 8, "format": "({})"}, "checked": "guidelines",
                   "note": "one column 3.5 in, two 7.16 in, at most 7.16 x 8.8 in",
                   "source": "https://journals.ieeeauthorcenter.ieee.org/create-your-ieee-journal-article/create-graphics-for-your-article/resolution-and-size/"},
+    # --- American Chemical Society ---
+    "jacs": _j(_ACS, "Journal of the American Chemical Society", checked="guidelines", source=_ACS_GUIDE + "jacsat"),
+    "acs-nano": _j(_ACS, "ACS Nano", checked="publisher", source=_ACS_GUIDE + "ancac3"),
+    "nano-letters": _j(_ACS, "Nano Letters", checked="publisher", source=_ACS_GUIDE + "nalefd"),
+    "chemistry-of-materials": _j(_ACS, "Chemistry of Materials", checked="publisher", source=_ACS_GUIDE + "cmatex"),
+    "acs-ami": _j(_ACS, "ACS Applied Materials & Interfaces", checked="publisher", source=_ACS_GUIDE + "aamick"),
+    "acs-catalysis": _j(_ACS, "ACS Catalysis", checked="publisher", source=_ACS_GUIDE + "accacs"),
+    "acs-energy-letters": _j(_ACS, "ACS Energy Letters", checked="publisher", source=_ACS_GUIDE + "aelccp"),
+    "analytical-chemistry": _j(_ACS, "Analytical Chemistry", checked="publisher", source=_ACS_GUIDE + "ancham"),
+    "jpcc": _j(_ACS, "The Journal of Physical Chemistry C", checked="publisher", source=_ACS_GUIDE + "jpccck"),
+    "langmuir": _j(_ACS, "Langmuir", checked="publisher", source=_ACS_GUIDE + "langd5"),
+    # --- Royal Society of Chemistry ---
+    "chemical-science": _j(_RSC, "Chemical Science"),
+    "chemcomm": _j(_RSC, "Chemical Communications"),
+    "jmca": _j(_RSC, "Journal of Materials Chemistry A"),
+    "nanoscale": _j(_RSC, "Nanoscale"),
+    "ees": _j(_RSC, "Energy & Environmental Science"),
+    "pccp": _j(_RSC, "Physical Chemistry Chemical Physics"),
+    "rsc-advances": _j(_RSC, "RSC Advances"),
+    "dalton": _j(_RSC, "Dalton Transactions"),
+    # --- Elsevier ---
+    "materials-today": _j(_ELSEVIER, "Materials Today"),
+    "acta-materialia": _j(_ELSEVIER, "Acta Materialia"),
+    "carbon": _j(_ELSEVIER, "Carbon"),
+    "nano-energy": _j(_ELSEVIER, "Nano Energy"),
+    "journal-of-power-sources": _j(_ELSEVIER, "Journal of Power Sources"),
+    "chemical-engineering-journal": _j(_ELSEVIER, "Chemical Engineering Journal"),
+    "applied-catalysis-b": _j(_ELSEVIER, "Applied Catalysis B: Environment and Energy"),
+    # --- Wiley ---
+    "advanced-materials": _j(_WILEY, "Advanced Materials"),
+    "advanced-functional-materials": _j(_WILEY, "Advanced Functional Materials"),
+    "advanced-energy-materials": _j(_WILEY, "Advanced Energy Materials"),
+    "advanced-science": _j(_WILEY, "Advanced Science"),
+    "small": _j(_WILEY, "Small"),
+    "angewandte": _j(_WILEY, "Angewandte Chemie"),
 }
 
 # the order journals are offered in: by publisher, as listed above

@@ -15,9 +15,10 @@ other apps.
 | `fignimble table table1.py table1.docx` | a table (a `Table` file, or the only table of a figure) as a Word, Excel, CSV or TSV file, with its title and notes |
 | `fignimble table fig1.py 3 table1.docx` | a table of a figure that has several (its element number or name) |
 | `fignimble table data.csv table1.docx` | a CSV or TSV file as a Word table |
+| `fignimble source-data fig1.py [out.xlsx]` | the values plotted in each panel, one sheet per panel ([source data](../guide/export.md#source-data)); default `fig1_source_data.xlsx` |
 | `fignimble provenance fig1.pdf` | what an exported file was made from, and whether the project's files still match (exit status 1 if not) |
 | `fignimble journals` | the journal presets and their column widths, and the poster sizes |
-| `fignimble --version` | the installed version (0.4.1 and later) |
+| `fignimble --version` | the installed version (0.5.0 and later) |
 | `fignimble install-skills [--agent codex] [--project DIR] [--dest DIR]` | installs the [agent skills](../ai/agents.md#agent-skills) for Claude Code (`~/.claude/skills`), Codex, or another agent; `--list` shows them, `--uninstall` removes them |
 
 Options of `export`:

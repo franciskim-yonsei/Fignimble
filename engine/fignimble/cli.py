@@ -26,6 +26,8 @@ import os
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 
 def _project_of(fig: Path) -> Path:
     """The project of a figure file: the folder holding it (and style.py, panels/ ...)."""
@@ -88,6 +90,9 @@ def main(argv=None):
     p.add_argument("--decimals", type=int)
     p.add_argument("--no-header", action="store_true")
     p.add_argument("--title")
+    p = sub.add_parser("source-data", help="write the values plotted in each panel to a spreadsheet (.xlsx)")
+    p.add_argument("figure")
+    p.add_argument("output", nargs="?", help="default: <figure>_source_data.xlsx")
     sub.add_parser("journals", help="list journal presets")
     p = sub.add_parser("install-skills", help="install Fignimble's agent skills for Claude Code, Codex or another agent",
                        description="Install the agent skills that come with Fignimble, so a coding agent knows how to "
@@ -176,6 +181,19 @@ def main(argv=None):
             print(f"resolution: vector, pictures at {rz['pictures']} dpi or more ({rz['need']['photo']} dpi asked)")
         for w in res["warnings"]:
             print("warning:", w, file=sys.stderr)
+        return 0
+    if a.cmd == "source-data":
+        from . import sourcedata
+        fig = Path(a.figure)
+        out = a.output or f"{fig.stem}_source_data.xlsx"
+        try:
+            res = sourcedata.export(_renderer(fig), str(fig.resolve()), str(Path(out).resolve()))
+        except ValueError as exc:
+            print(exc)
+            return 1
+        print(f"wrote {res['path']}")
+        for p_ in res["panels"]:
+            print(f"  {p_['sheet']}: {p_['blocks']} table{'s' if p_['blocks'] != 1 else ''}, {p_['how']}")
         return 0
     if a.cmd == "table":
         from . import tables

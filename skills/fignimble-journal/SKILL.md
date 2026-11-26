@@ -22,7 +22,7 @@ Follow the `fignimble` skill for the figure language and its rules (load it if i
 ## 1. Which journal, which figures
 
 - The journal the user named, else the one `style.py` already uses (`Style.journal("...")`). `fignimble journals`
-  lists the 40 journals with their widths, fonts, minimum sizes, label style and dpi, and how each number was checked
+  lists the 71 journals (biology, chemistry and materials science: ACS, RSC, Elsevier, Wiley too) with their widths, fonts, minimum sizes, label style and dpi, and how each number was checked
   (against the guidelines, from summaries, or the publisher's usual values). Tell the user to check the journal's
   current guidelines for anything marked as not checked.
 - The figures and tables: every top-level figure and table file, unless the user named some. Tables (`Table`
@@ -61,6 +61,10 @@ Fix each warning at its cause:
 - **Outside the figure / overlapping**: move it inside, a few mm from the edge.
 - **Colors color-blind readers can't tell apart**: change one in the palette (Okabe–Ito is safe); check with
   `fignimble snapshot` and the user's eyes.
+- **Colors that print alike in grayscale** (a note, not a warning): only matters if the figure may be printed in
+  black and white; then tell them apart by lightness, markers or line styles.
+- **A scale bar without a pixel size**: give `pixel_size=` from the microscope (the picture's metadata had none), or
+  check which is right when it disagrees with the metadata.
 - **Type 3 fonts, duplicate labels**: follow the message.
 
 Re-run `fignimble check` and open `fignimble snapshot FIG.py` for each figure after the changes: restyling can make
@@ -78,6 +82,10 @@ fignimble export fig1.py fig1-dark.pdf --dark                    # for talks
 Export what the journal asks for (many take PDF; some want TIFF or EPS). The command prints the resolution it measured;
 report it. Put the exports where the user asks (e.g. `submission/`), not in `.fignimble/`. `--cmyk`, `--outline` and
 EPS conversions need Ghostscript (`brew install ghostscript`); say so if it is missing.
+
+If the journal asks for source data, `fignimble source-data fig1.py` writes the values plotted in each panel to
+`fig1_source_data.xlsx`, one sheet per panel. Check each panel's sheet: what couldn't be read back (shaded areas,
+violins) is noted there; give that panel a `source_data(...)` function next to `draw` returning the data it plots.
 
 Tables go to the journal as text, not pictures: `fignimble export table1.py table1.docx` for each `Table` file (Word,
 with its title and notes; `.xlsx` if the journal asks for spreadsheets). A table drawn inside a figure:

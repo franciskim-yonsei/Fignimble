@@ -953,8 +953,9 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             toast("Select a picture (PNG, TIFF or JPEG) for the scale bar", error: true); return
         }
         let a = NSAlert(); a.messageText = "Scale bar"
-        a.informativeText = "How long the bar is, and how big one pixel of the original picture is (from the microscope's metadata)."
-        let len = NSTextField(string: "50"), unit = NSTextField(string: "µm"), px = NSTextField(string: "0.325")
+        a.informativeText = "How long the bar is, and how big one pixel of the original picture is. Leave the pixel size empty to read it from the picture's metadata (OME-TIFF, ImageJ); preflight warns if there is none."
+        let len = NSTextField(string: "50"), unit = NSTextField(string: "µm"), px = NSTextField(string: "")
+        px.placeholderString = "from file"
         for f in [len, unit, px] { f.widthAnchor.constraint(equalToConstant: 80).isActive = true }
         let grid = NSGridView(views: [[NSTextField(labelWithString: "Length"), len], [NSTextField(labelWithString: "Unit"), unit],
                                       [NSTextField(labelWithString: "One pixel is"), px]])
@@ -962,8 +963,9 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         a.accessoryView = grid; a.addButton(withTitle: "Add"); a.addButton(withTitle: "Cancel")
         a.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn else { return }
-            self?.edit(["op": "add_scalebar", "oid": oid, "props": ["length": Double(len.stringValue) ?? 50, "unit": unit.stringValue,
-                                                                     "pixel_size": Double(px.stringValue) ?? 1]])
+            var props: [String: Any] = ["length": Double(len.stringValue) ?? 50, "unit": unit.stringValue]
+            if let d = Double(px.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")) { props["pixel_size"] = d }
+            self?.edit(["op": "add_scalebar", "oid": oid, "props": props])
         }
     }
 
@@ -1678,6 +1680,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         case #selector(toggleSidebar(_:)): item.title = navigator.isHidden ? "Show Figures and Layers" : "Hide Figures and Layers"
         case #selector(toggleInspector(_:)): item.title = rightHost.isHidden ? "Show Inspector" : "Hide Inspector"
         case #selector(labelsNone(_:)): item.state = figure?.labelStyle["numbering"] as? String == "none" ? .on : .off; return figure != nil
+        case #selector(exportSourceData(_:)): return figure != nil && figure?.isTableFigure != true
         case #selector(exportTable(_:)): return (sel.count == 1 && figure?.element(sel[0])?.kind == "table") || figure?.tableCells != nil
         case #selector(insertTable(_:)): return figure != nil && figure?.isTable == false
         case #selector(insertRemotePanel(_:)): return figure != nil
