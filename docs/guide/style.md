@@ -13,7 +13,7 @@ STYLE = Style.journal("nature", labels=Labels.journal("nature"), palette="okabe-
 A `Style` sets the font, the text size, line widths, whether axes have top and right spines, and the colors panels
 plot with, for every panel. Plots made at different times, by different people, match. Change `style.py` (or the
 **Style** section of the inspector with nothing selected) and every figure follows. The inspector's **Font** menu
-lists the fonts installed on the Mac.
+lists the fonts installed on the Mac, and Microsoft Office's fonts when Office is installed.
 
 ```python
 STYLE = Style(font="Arial", size=7, linewidth=0.6, despine=True, min_font=5, min_dpi=300,
@@ -21,6 +21,16 @@ STYLE = Style(font="Arial", size=7, linewidth=0.6, despine=True, min_font=5, min
 ```
 
 `rc={...}` passes any other matplotlib settings to every panel.
+
+### Microsoft Office fonts
+
+Office's fonts can be the style's font: Aptos (Office's default since 2023), Aptos Display, Aptos Narrow, Aptos Serif,
+Calibri, Cambria and the rest (`Style(font="Aptos")`). Office doesn't install these fonts for other apps. It keeps
+them inside its own apps and downloads others when a document uses them, so Fignimble uses them from where Office keeps
+them and copies nothing. A font Office hasn't downloaded yet appears once a document in PowerPoint or Word has used it.
+An exported PDF carries the font, and an EPS has its text as outlines, so both look the same everywhere; an SVG only
+names it. On a computer without Office, a figure in Aptos draws in a substitute font: install Microsoft's free
+[Aptos download](https://www.microsoft.com/en-us/download/details.aspx?id=106087) there, or choose another font.
 
 ## Panel letters
 

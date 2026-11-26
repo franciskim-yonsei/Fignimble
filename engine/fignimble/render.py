@@ -37,7 +37,9 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.figure import Figure as MplFigure  # noqa: E402
 
 import matplotlib.lines  # noqa: E402
-from . import api, journals, layout, qr, tables  # noqa: E402
+from . import api, journals, layout, officefonts, qr, tables  # noqa: E402
+
+officefonts.install()          # Microsoft Office's fonts (Aptos, Aptos Display, Calibri, ...) for matplotlib
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 sys.dont_write_bytecode = True          # running a project's code leaves no __pycache__ in it
@@ -50,7 +52,7 @@ VECTOR = (".pdf", ".svg")
 SKIP_DIRS = {".fignimble", ".git", "__pycache__", ".venv", "venv", "node_modules", ".ipynb_checkpoints"}
 
 
-CACHE_VERSION = 9                  # bump when a change to drawing makes cached pieces wrong
+CACHE_VERSION = 10                 # bump when a change to drawing makes cached pieces wrong
 MAX_SPRITE_PX = 24e6               # pixels of the editor's picture of one piece, at most
 MAX_SPRITE_SIDE = 12000
 
@@ -2559,7 +2561,8 @@ def _math_rc(family) -> dict:
         from matplotlib import font_manager
         try:
             path = font_manager.findfont(font_manager.FontProperties(family=list(family)), fallback_to_default=True)
-            name = font_manager.get_font(path).family_name
+            # the name matplotlib knows it by: Aptos Display's files say "Aptos" (see officefonts.py)
+            name = officefonts.family_of(path) or font_manager.get_font(path).family_name
         except Exception:                                # noqa: BLE001
             name = "DejaVu Sans"
         _FONT_NAMES[key] = name

@@ -891,7 +891,9 @@ final class FontPicker: NSComboBox, NSComboBoxDelegate {
     private var commit: ((String?) -> Void)?
     private var initial = ""
     private var blank: String?
-    static let families: [String] = NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") }.sorted()
+    // with Office's cloud fonts by their own names: macOS lists Aptos Display as part of Aptos, matplotlib knows it apart
+    static let families: [String] = Array(Set(NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") }
+                                              + OfficeFonts.cloudFamilies())).sorted()
 
     convenience init(_ value: String?, blank: String?, width: CGFloat, commit: @escaping (String?) -> Void) {
         self.init(frame: .zero)

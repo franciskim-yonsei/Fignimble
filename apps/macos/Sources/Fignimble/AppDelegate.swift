@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         MainController.applyAppearance()
+        OfficeFonts.register()          // Aptos, Calibri, ... in the font menu, before it is built
         controller = MainController()
         buildMenu()
         controller.showWindow()
