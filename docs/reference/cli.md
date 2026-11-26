@@ -17,6 +17,7 @@ other apps.
 | `fignimble table data.csv table1.docx` | a CSV or TSV file as a Word table |
 | `fignimble provenance fig1.pdf` | what an exported file was made from, and whether the project's files still match (exit status 1 if not) |
 | `fignimble journals` | the journal presets and their column widths, and the poster sizes |
+| `fignimble --version` | the installed version (0.4.1 and later) |
 | `fignimble install-skills [--agent codex] [--project DIR] [--dest DIR]` | installs the [agent skills](../ai/agents.md#agent-skills) for Claude Code (`~/.claude/skills`), Codex, or another agent; `--list` shows them, `--uninstall` removes them |
 
 Options of `export`:

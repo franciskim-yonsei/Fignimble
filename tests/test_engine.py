@@ -864,3 +864,68 @@ def test_copy_paste_delete_whole_figure_and_table(session):
     assert n == "fig1_copy" and (s.project / "fig1_copy.py").read_text() == f["text"]
     assert s.delete_figure({"name": n})["ok"] and not (s.project / "fig1_copy.py").exists()
     s.delete_figure({"name": t}); s.delete_figure({"name": new})
+
+
+def _drawing_pdf(path, letter=None, font="helv"):
+    """A 60 x 40 mm PDF with an axis label in `font` and, if given, a bold panel letter in its top-left corner."""
+    import pymupdf
+    doc = pymupdf.open()
+    page = doc.new_page(width=60 / 25.4 * 72, height=40 / 25.4 * 72)
+    page.insert_text((40, 100), "Time (h)", fontname=font, fontsize=8)
+    if letter:
+        page.insert_text((4, 12), letter, fontname="hebo", fontsize=10)
+    doc.save(str(path))
+
+
+def test_letter_drawn_inside_a_panel(tmp_path):
+    _drawing_pdf(tmp_path / "a.pdf", letter="A")
+    _drawing_pdf(tmp_path / "b.pdf")
+    panel = ('def draw(fig):\n    ax = fig.add_subplot()\n    ax.set_xlabel("Time (h)")\n'
+             '    ax.set_title("C", loc="left", fontweight="bold")\n')
+    r = _render(tmp_path, 'fig = Figure(width=200, height=50, style=Style(font="Arial"))\n'
+                          'fig.image("a.pdf", x=0, y=0, w=60)\n'
+                          'fig.image("b.pdf", x=65, y=0, w=60)\n'
+                          'fig.panel("p.py", x=130, y=0, w=60, h=45)\n', {"p.py": panel})
+    msgs = [w["message"] for w in r["warnings"] if "own letter" in w["message"]]
+    assert len(msgs) == 2 and msgs[0].startswith("panel a:") and msgs[1].startswith("panel c:"), msgs
+
+
+def test_letter_typed_as_text(tmp_path):
+    r = _render(tmp_path, 'fig = Figure(width=100, height=50)\n'
+                          'fig.panel("p.py", x=0, y=0, w=45, h=45)\n'
+                          'fig.text("a", x=0, y=0, weight="bold")\n'
+                          'fig.text("Treated", x=50, y=5)\n', {"p.py": PANEL})
+    msgs = [w["message"] for w in r["warnings"] if "typed by hand" in w["message"]]
+    assert len(msgs) == 1 and "“a”" in msgs[0], msgs
+    r = _render(tmp_path, 'fig = Figure(width=100, height=50, labels=Labels(numbering="none"))\n'
+                          'fig.panel("p.py", x=0, y=0, w=45, h=45)\n'
+                          'fig.text("a", x=0, y=0, weight="bold")\n', {"p.py": PANEL})
+    assert not any("typed by hand" in w["message"] for w in r["warnings"])   # no letters of its own: theirs are fine
+
+
+def test_overlapping_panels(tmp_path):
+    r = _render(tmp_path, 'fig = Figure(width=120, height=50)\n'
+                          'a = fig.panel("p.py", x=0, y=0, w=50, h=45)\n'
+                          'fig.panel("p.py", x=40, y=0, w=50, h=45)\n'
+                          'fig.panel("p.py", x=90, y=0, w=28, h=45)\n'                       # touching is fine
+                          'fig.inset(Panel("p.py"), within=a, x=0.5, y=0.1, w=0.4, h=0.4)\n', {"p.py": PANEL})
+    msgs = [w["message"] for w in r["warnings"] if "overlap" in w["message"]]
+    assert msgs == ["panel a and panel b overlap by 10.0 x 45.0 mm; move one, or make the smaller an inset "
+                    "(fig.inset)"], msgs
+
+
+def test_picture_font_other_than_the_style(tmp_path):
+    _drawing_pdf(tmp_path / "times.pdf", font="tiro")
+    _drawing_pdf(tmp_path / "helv.pdf", font="helv")                  # Helvetica stands in for Arial
+    r = _render(tmp_path, 'fig = Figure(width=130, height=45, style=Style(font="Arial"))\n'
+                          'fig.image("times.pdf", x=0, y=0, w=60)\n'
+                          'fig.image("helv.pdf", x=65, y=0, w=60)\n')
+    msgs = [w["message"] for w in r["warnings"] if "not the style's" in w["message"]]
+    assert len(msgs) == 1 and msgs[0].startswith("panel a: text in Times"), msgs
+
+
+def test_figure_takes_its_styles_journal(tmp_path):
+    r = _render(tmp_path, 'fig = Figure(width=170, height=40, style=Style.journal("cell"))\n'
+                          'fig.panel("p.py", x=0, y=0, w=80, h=35)\n', {"p.py": PANEL})
+    assert r["journal"]["key"] == "cell" and not r["journal"]["fits"]
+    assert any("Cell figures are" in w["message"] for w in r["warnings"]), r["warnings"]

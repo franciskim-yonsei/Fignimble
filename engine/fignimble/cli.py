@@ -49,7 +49,9 @@ def _renderer(fig: Path):
 
 
 def main(argv=None):
+    from . import __version__
     ap = argparse.ArgumentParser(prog="fignimble", description="Multi-panel figures for publication, from Python.")
+    ap.add_argument("--version", action="version", version=f"fignimble {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("new", help="make a new project")
     p.add_argument("folder", nargs="?", default="fignimble", help="the new project's folder (default: fignimble)")

@@ -1425,6 +1425,16 @@ class Renderer:
                     warn.append({"level": "warning", "oid": pc.oid,
                                  "message": f"{who(pc.oid)}: text as small as {facts['min_size'] * s:.1f} pt "
                                             f"(minimum {min_font:g} pt)"})
+                if pc.oid in names and facts["letters"]:
+                    warn.append({"level": "warning", "oid": pc.oid,
+                                 "message": f"{who(pc.oid)}: has its own letter “{facts['letters'][0]}” drawn inside it "
+                                            f"as well; remove it from the panel's code or picture (Fignimble letters "
+                                            "the panels)"})
+                other = [f for f in facts["fonts"] if not _same_font(f, st.font)]
+                if other and st.font:
+                    warn.append({"level": "warning", "oid": pc.oid,
+                                 "message": f"{who(pc.oid)}: text in {_font_family(other[0])}, not the style's "
+                                            f"{st.font}; draw it in {st.font} so every panel matches"})
                 if facts["type3"]:
                     warn.append({"level": "warning", "oid": pc.oid,
                                  "message": f"{who(pc.oid)}: Type 3 font {facts['type3']}; journals want TrueType or "
@@ -1479,6 +1489,24 @@ class Renderer:
             if w_["oid"] is not None:
                 w_["message"] = who(w_["oid"]) + w_["message"][w_["message"].index(":"):]
             warn.append(w_)
+        boxes = [i for i in infos if i["kind"] in ("panel", "image", "figure", "table") and not i.get("hidden")
+                 and not isinstance(fig, api.Table)]
+        for k, a in enumerate(boxes):
+            for b in boxes[k + 1:]:
+                ax, ay, aw, ah = a["box"]
+                bx, by, bw, bh = b["box"]
+                ow, oh = min(ax + aw, bx + bw) - max(ax, bx), min(ay + ah, by + bh) - max(ay, by)
+                if ow > 0.5 and oh > 0.5:
+                    warn.append({"level": "warning", "oid": b["oid"],
+                                 "message": f"{who(a['oid'])} and {who(b['oid'])} overlap by {ow:.1f} x {oh:.1f} mm; "
+                                            "move one, or make the smaller an inset (fig.inset)"})
+        if labels:
+            for info in infos:
+                t = (info["props"].get("text") or "").strip().strip("*")
+                if info["kind"] == "text" and _LETTER.match(t):
+                    warn.append({"level": "warning", "oid": info["oid"],
+                                 "message": f"{who(info['oid'])} looks like a panel letter typed by hand; Fignimble "
+                                            "letters the panels (Labels in the style), so remove it"})
         seen = {}
         for l in labels:
             if l["text"] in seen:
@@ -1510,7 +1538,14 @@ class Renderer:
             spans = [{**sp, "dir": ln.get("dir", (1, 0))} for b in page.get_text("dict").get("blocks", [])
                      for ln in b.get("lines", []) for sp in ln.get("spans", []) if sp.get("text", "").strip()]
             sizes = [sp["size"] for sp in spans if not _is_script(sp, spans)]
-            got = {"min_size": min(sizes) if sizes else None,
+            W, H = page.rect.width, page.rect.height
+            # a bold lone letter in the top-left corner: a panel letter the drawing makes itself
+            letters = [sp["text"].strip() for sp in spans
+                       if _LETTER.match(sp["text"].strip()) and (sp["flags"] & 16 or "bold" in sp["font"].lower())
+                       and sp["bbox"][0] < 0.15 * W and sp["bbox"][1] < 0.15 * H]
+            fonts = sorted({sp["font"].split("+")[-1] for sp in spans
+                            if re.search(r"[A-Za-z0-9]", sp["text"]) and not _SYMBOL_FONT.search(sp["font"])})
+            got = {"min_size": min(sizes) if sizes else None, "letters": letters, "fonts": fonts,
                    "type3": next((f[3] for f in page.get_fonts() if f[2] == "Type3"), None),
                    "images": [{"bbox": tuple(i["bbox"]), "width": i["width"]} for i in page.get_image_info()]}
             self._facts_cache[pdf] = got
@@ -2442,6 +2477,25 @@ def _css_decls(body: str) -> dict:
             if k and v and k != "enable-background" and not v.endswith("!important"):
                 out[k] = v
     return out
+
+
+_LETTER = re.compile(r"^\(?[A-Za-z]\)?\.?$")
+_SYMBOL_FONT = re.compile(r"symbol|dingbat|math|stix|^cm(sy|mi|ex|r)\d|^msam|^msbm", re.I)
+# metric-compatible stand-ins for one another: text set in any of them looks the same in print
+_SANS_CLONES = {"arial", "helvetica", "helveticaneue", "liberationsans", "nimbussans", "nimbussansl",
+                "texgyreheros", "arimo"}
+
+
+def _font_family(font: str) -> str:
+    """'ABCDEF+Arial-BoldMT' -> 'Arial'."""
+    f = re.split(r"[-,]", font.split("+")[-1])[0]
+    return re.sub(r"(PSMT|MT|PS)$", "", re.sub(r"(Bold|Italic|Oblique|Regular)+(MT)?$", "", f)) or f
+
+
+def _same_font(font: str, style_font: str | None) -> bool:
+    a = re.sub(r"[^a-z]", "", _font_family(font).lower())
+    b = re.sub(r"[^a-z]", "", (style_font or "").lower())
+    return not b or a.startswith(b) or b.startswith(a) or (a in _SANS_CLONES and b in _SANS_CLONES)
 
 
 def _is_script(span, spans) -> bool:

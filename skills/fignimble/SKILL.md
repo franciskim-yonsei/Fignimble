@@ -186,7 +186,8 @@ fignimble check                 # preflight every figure in the folder; exit sta
 Look at the snapshot yourself before saying a figure is done: overlapping labels, clipped tick labels, empty panels
 and a panel drawn red (its error) only show up there. `info` prints a failing panel's traceback; fix the code.
 Preflight warns about text below the journal's minimum size (inside panels too), pictures under 300 dpi at their
-printed size, elements outside the figure, colors color-blind readers can't tell apart, and widths that miss the
+printed size, elements outside the figure, overlapping panels, letters drawn inside a panel or typed with `fig.text`,
+text in a font other than the style's, colors color-blind readers can't tell apart, and widths that miss the
 journal's columns.
 
 ```bash

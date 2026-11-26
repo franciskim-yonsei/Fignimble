@@ -9,6 +9,6 @@
 from .api import PALETTES, cached, color, is_dark, Column, Design, Element, Figure, Grid, Image, Labels, Panel, Row, Spacer, Style, Table
 from .journals import JOURNALS
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = ["Figure", "Table", "Labels", "Style", "Element", "JOURNALS", "Panel", "Image", "Spacer", "Row", "Column", "Grid",
            "Design", "is_dark", "color", "cached", "PALETTES"]

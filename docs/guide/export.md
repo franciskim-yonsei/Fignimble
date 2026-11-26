@@ -12,7 +12,10 @@ the element.
 - pictures below the minimum resolution at their printed size;
 - Type 3 fonts, which journals reject;
 - elements and letters reaching outside the figure;
-- two panels with the same letter;
+- two panels with the same letter, a panel that draws its own letter as well (in its code or picture), and a
+  letter typed in as text;
+- panels that overlap (an inset belongs in `fig.inset`);
+- text in a panel or picture in a font other than the style's;
 - colors color-blind readers confuse;
 - a figure width that isn't one of the journal's columns;
 - panels whose code fails, with the error, and what to do when a package is missing.
