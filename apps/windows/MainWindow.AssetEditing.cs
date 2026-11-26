@@ -68,15 +68,23 @@ public partial class MainWindow
 
     private Task EditClickedPlotText(FigureElement layer, PanelText hit)
     {
-        if (shownFigure is not { } figure || currentRender is not { } original || !FigureCanvas.Unlocked(layer)) return Task.CompletedTask;
-        var dialog = new FormDialog(this, "Edit plot text");
-        var text = dialog.Text(hit.Key, hit.Text);
-        return dialog.Confirm("Apply", () => null) && text.Text != hit.Text && StillEditing(original)
-            ? ApplyPlotText(figure, layer.Oid, hit.Key, hit.Text, text.Text) : Task.CompletedTask;
+        if (hit.Box is [var x, var y, _, _] && FigureCanvas.Unlocked(layer)) OpenCanvasEditor(new Point(x, y), layer, hit);
+        return Task.CompletedTask;
     }
 
     private Task ApplyPlotText(string figure, string oid, string key, string old, string text) => EditFigure(figure,
         new { figure, op = "panel_text", oid, key, old, text }, "Updating plot text…");
+
+    private void StartPictureCrop()
+    {
+        if (Page.Selection is not { Kind: "image" } image || !FigureCanvas.Movable(image)) return;
+        if (image.Props?.Rotation is not (null or 0) || image.Props?.Extra?.GetValueOrDefault("flip").ValueKind == JsonValueKind.String)
+        { Status.Text = "Remove rotation and flip before cropping this picture."; return; }
+        Page.SetTool(CanvasTool.Select);
+        Page.BeginCrop(image.Oid);
+        Page.Focus();
+        Status.Text = "Drag the picture’s crop handles. Press Esc to leave crop mode.";
+    }
 
     private Task CropImage()
     {
@@ -122,6 +130,15 @@ public partial class MainWindow
 
     private Task ApplyRotation(string figure, string oid, double by) => EditFigure(figure,
         new { figure, op = "rotate", oids = new[] { oid }, by }, "Rotating image…");
+
+    private bool CanRotateSelected => !busy && validFigure && Page.Selections is { Length: > 0 } layers &&
+        layers.All(e => FigureCanvas.Movable(e) && e.Kind is "panel" or "image" or "text");
+
+    private Task RotateSelected(double by) => CanRotateSelected && shownFigure is { } figure
+        ? EditFigure(figure, new { figure, op = "rotate", oids = Page.SelectedIds, by }, "Rotating layers…") : Task.CompletedTask;
+
+    private Task FlipPicture(string axis) => IsEditableImage && shownFigure is { } figure
+        ? EditFigure(figure, new { figure, op = "flip", oids = Page.SelectedIds, axis }, "Flipping picture…") : Task.CompletedTask;
 
     private bool StillEditing(FigureRender? original)
     {

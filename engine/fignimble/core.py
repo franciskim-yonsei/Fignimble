@@ -336,7 +336,7 @@ class Session:
         self.current = a["name"]
         if "dark" in a:
             self.dark = bool(a["dark"])
-        return self.render(a["name"], a.get("pxPerMM"))
+        return self.render(a["name"], a.get("pxPerMM"), force=bool(a.get("force")))
 
     # --- undo ---
 
@@ -1440,6 +1440,37 @@ class Session:
         else:
             self._set(plan, data, info, {"rows": [[_cell(c) for c in r] for r in rows]})
         return "Edit Table"
+
+    def _op_table_cell(self, plan, data, a):
+        """Edit only one cell, checking the value seen when the inline editor opened."""
+        info = self._info(data, a["oid"])
+        if info["kind"] != "table":
+            raise EditError("only a table has cells")
+        props = info["props"]
+        src = props.get("source")
+        if src:
+            path = (self.project / src).resolve()
+            if not path.is_relative_to(self.project):
+                raise EditError("that table's file is outside the project")
+            before = path.read_text(encoding="utf-8-sig")
+            # Check against the disk, not a cached render, before replacing just this cell.
+            rows, delim = tables.parse_delimited(before, path.suffix)
+        else:
+            rows = [list(row) for row in props["rows"]]
+        i, j = int(a["row"]), int(a["column"])
+        if i < 0 or i >= len(rows) or j < 0 or j >= max(map(len, rows)):
+            raise EditError("that cell no longer exists")
+        row = rows[i]
+        old = row[j] if j < len(row) else None
+        if old != a["expected"]:
+            raise EditError("this cell changed while you were editing it; reopen it and try again")
+        row.extend([""] * (j + 1 - len(row)))
+        row[j] = a["text"] if src else _cell(a["text"])
+        if src:
+            plan.raw[str(path)] = (before, tables.write_delimited(rows, delim))
+        else:
+            self._set(plan, data, info, {"rows": rows})
+        return "Edit Table Cell"
 
     def _op_fit_figure(self, plan, data, a):
         """Make the figure the size of what is on it, with a margin: {margin?} (mm)."""

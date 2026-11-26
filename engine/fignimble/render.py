@@ -1417,7 +1417,8 @@ class Renderer:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if fmt == "png" and cmyk:
             raise ValueError("PNG has no CMYK; export a TIFF or a PDF")
-        journal = journal or fig.props.get("journal") or None
+        # Explicit General bypasses the figure's journal without disabling poster rules.
+        journal = None if journal == "general" else journal or fig.props.get("journal") or None
         poster = fig.props.get("poster") and not journal
         need = dict(journals.POSTER_DPI) if poster else journals.dpi(journal)
         kind = "combination" if doc[0].get_image_info() else "line"
@@ -1516,12 +1517,15 @@ class Renderer:
         import datetime
         import hashlib as hl
         from . import __version__
+        def portable_name(path):
+            try:
+                return path.relative_to(self.project).as_posix()
+            except ValueError:
+                return path.as_posix()
+
         files = {}
         for f in sorted(self.used):
-            try:
-                rel = str(f.relative_to(self.project))
-            except ValueError:
-                rel = str(f)
+            rel = portable_name(f)
             try:
                 files[rel] = hl.sha256(f.read_bytes()).hexdigest()[:16]
             except OSError:
@@ -1529,8 +1533,7 @@ class Renderer:
         style = self.project / "style.py"
         if style.exists() and "style.py" not in files:
             files["style.py"] = hl.sha256(style.read_bytes()).hexdigest()[:16]
-        out = {"fignimble": __version__, "figure": str(self.resolve(file).relative_to(self.project))
-               if str(self.resolve(file)).startswith(str(self.project)) else str(file),
+        out = {"fignimble": __version__, "figure": portable_name(self.resolve(file)),
                "made": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "files": files}
         git = shutil.which("git")
         if git:

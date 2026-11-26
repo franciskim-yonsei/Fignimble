@@ -24,21 +24,29 @@ public partial class MainWindow
 
     private Task CreateProject(string folder, string journal) => During("Creating project…", async () =>
     {
+        if (!ConfirmDiscardDrafts()) return;
         if (Directory.Exists(folder) && Directory.EnumerateFileSystemEntries(folder).Any())
             throw new IOException("The project folder must be empty. Choose or create a different folder.");
-        var result = await GetEngine().CallAsync<NewProjectResult>("new_project", new { dir = folder, journal });
+        using var setup = new EngineClient(ProjectPython(null));
+        var result = await setup.CallAsync<NewProjectResult>("new_project", new { dir = folder, journal });
         await OpenProjectCore(result.Project, result.Figure);
     });
 
     private async void NewFigureClicked(object sender, RoutedEventArgs e)
     {
-        if (project is null) return;
-        var dialog = new NewFigureDialog(currentRender?.Size) { Owner = this };
-        if (dialog.ShowDialog() == true) await CreateFigure(dialog.FigureName, dialog.FigureWidth, dialog.FigureHeight);
+        if (project is null || busy) return;
+        PosterTemplate[] templates = [];
+        await During("Loading figure templates…", async () =>
+            templates = (await engine!.CallAsync<PosterTemplates>("poster_templates")).Templates);
+        var dialog = new NewFigureDialog(currentRender?.Size, templates.Select(t => (t.Key, t.ToString(), t.Size))) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        if (dialog.PosterTemplate is { } poster) await CreatePoster(dialog.FigureName, poster);
+        else await CreateFigure(dialog.FigureName, dialog.FigureWidth, dialog.FigureHeight);
     }
 
     private Task CreateFigure(string name, double width, double height) => During("Creating figure…", async () =>
     {
+        if (!ConfirmDiscardDrafts()) return;
         var result = await engine!.CallAsync<NewFigureResult>("new_figure", new { name, width, height });
         await RefreshProject(result.Name);
     });
@@ -48,22 +56,86 @@ public partial class MainWindow
     private Task AddSample() => AddPanel("new_panel", "Adding sample plot…", (figure, box) =>
         new { figure, name = "sample_plot", x = box.X, y = box.Y, w = box.Width, h = box.Height });
 
-    private async void ImportClicked(object sender, RoutedEventArgs e)
+    private async void ImportClicked(object sender, RoutedEventArgs e) => await ChooseImport("Import a panel, image, or table",
+        "Supported files|*.py;*.png;*.jpg;*.jpeg;*.svg;*.pdf;*.tif;*.tiff;*.csv;*.tsv|Python panels|*.py" +
+        "|Images|*.png;*.jpg;*.jpeg;*.svg;*.pdf;*.tif;*.tiff|Tables|*.csv;*.tsv");
+
+    private async Task ChooseImport(string title, string filter)
     {
-        if (project is null || !validFigure) return;
-        var dialog = new OpenFileDialog
-        {
-            Title = "Import a panel, image, or table", InitialDirectory = project,
-            Filter = "Supported files|*.py;*.png;*.jpg;*.jpeg;*.svg;*.pdf;*.tif;*.tiff;*.csv;*.tsv|Python panels|*.py" +
-                "|Images|*.png;*.jpg;*.jpeg;*.svg;*.pdf;*.tif;*.tiff|Tables|*.csv;*.tsv"
-        };
+        if (busy || project is null || !validFigure) return;
+        var dialog = new OpenFileDialog { Title = title, InitialDirectory = project, Filter = filter };
         if (dialog.ShowDialog(this) == true) await ImportPanel(dialog.FileName);
+    }
+
+    private async Task NewPanelFromCode()
+    {
+        if (busy || !validFigure || !ConfirmDiscardCode()) return;
+        var dialog = new FormDialog(this, "New panel from code");
+        var name = dialog.Text("Panel name", "panel");
+        if (!dialog.Confirm("Create panel", () => System.Text.RegularExpressions.Regex.IsMatch(name.Text.Trim(), @"\A[A-Za-z][A-Za-z0-9_]*\z")
+                ? null : "Start with a letter and use only letters, numbers, or underscores.")) return;
+        string stem = name.Text.Trim();
+        if (new[] { "AUX", "CON", "NUL", "PRN" }.Contains(stem, StringComparer.OrdinalIgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(stem, @"\A(COM|LPT)[1-9]\z", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        { Status.Text = "Choose a name that is not reserved by Windows."; return; }
+        string? created = null;
+        await AddPanel("new_panel", "Creating panel…", (figure, box) =>
+            new { figure, name = stem, x = box.X, y = box.Y, w = box.Width, h = box.Height }, result => created = result.File);
+        if (created is not null)
+        {
+            ShowDrawer(CodeTab);
+            if (OpenCodeFile(created, force: true)) SourceText.Focus();
+        }
     }
 
     private Task ImportPanel(string path) => AddPanel("import_file", "Importing…", (figure, box) =>
         new { figure, path, x = box.X, y = box.Y, w = box.Width, h = box.Height });
 
-    private Task AddPanel(string command, string status, Func<string, Rect, object> args)
+    private static readonly HashSet<string> DropExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".py", ".png", ".jpg", ".jpeg", ".svg", ".pdf", ".tif", ".tiff", ".csv", ".tsv" };
+
+    private string[] DroppedFiles(DragEventArgs e) => !busy && validFigure && !Page.IsDragging &&
+        e.AllowedEffects.HasFlag(DragDropEffects.Copy) && e.Data.GetData(DataFormats.FileDrop) is string[] paths
+        ? paths.Where(p => DropExtensions.Contains(Path.GetExtension(p)) && File.Exists(p)).ToArray() : [];
+
+    private void CanvasDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = DroppedFiles(e).Length > 0 ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void CanvasDrop(object sender, DragEventArgs e)
+    {
+        var paths = DroppedFiles(e);
+        e.Effects = paths.Length > 0 ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+        if (paths.Length > 0) await ImportAt(paths, e.GetPosition(Page));
+    }
+
+    private Task ImportAt(string[] paths, Point position)
+    {
+        if (!validFigure || shownFigure is not { } figure) return Task.CompletedTask;
+        return During("Importing dropped files…", async () =>
+        {
+            var failures = new List<string>();
+            for (int i = 0; i < paths.Length; i++)
+            {
+                string path = paths[i];
+                double x = Math.Round(position.X + i * 5, 2), y = Math.Round(position.Y + i * 5, 2);
+                try
+                {
+                    var result = await engine!.CallAsync<EditResult>("import_file", new { figure, path, x, y });
+                    ShowRender(result.Figure);
+                    Page.SelectIds(result.Select ?? []);
+                }
+                catch (Exception ex) { failures.Add($"{Path.GetFileName(path)}: {ex.Message}"); }
+            }
+            await ReadState(figure);
+            if (failures.Count > 0) Status.Text = string.Join(" · ", failures);
+        });
+    }
+
+    private Task AddPanel(string command, string status, Func<string, Rect, object> args, Action<EditResult>? receive = null)
     {
         if (!validFigure || currentRender is not { } render) return Task.CompletedTask;
         return During(status, async () =>
@@ -72,6 +144,7 @@ public partial class MainWindow
             ShowRender(result.Figure);
             Page.Select(result.Select?.FirstOrDefault());
             await ReadState(render.Figure);
+            receive?.Invoke(result);
         });
     }
 
@@ -102,7 +175,7 @@ public partial class MainWindow
         int count = Page.SelectedIds.Count;
         bool page = count == 0;
         bool panel = selected is not null && FigureCanvas.Resizable(selected);
-        Geometry.Header = page ? "Page geometry (mm)" : panel ? "Layer geometry (mm)" : count == 1 ? "Layer" : $"{count} selected layers";
+        Geometry.Header = page ? $"Page geometry ({geometryUnit})" : panel ? $"Layer geometry ({geometryUnit})" : count == 1 ? "Layer" : $"{count} selected layers";
         XField.Visibility = YField.Visibility = panel ? Visibility.Visible : Visibility.Collapsed;
         GeometryInputs.Visibility = ApplyButton.Visibility = page || panel ? Visibility.Visible : Visibility.Collapsed;
         XInput.IsEnabled = YInput.IsEnabled = panel;
@@ -116,10 +189,14 @@ public partial class MainWindow
         DetailsButton.Visibility = details ? Visibility.Visible : Visibility.Collapsed;
         DetailsButton.IsEnabled = details && FigureCanvas.Unlocked(selected!);
         DetailsButton.Content = selected?.Kind is "panel" or "image" ? "Label…" : "Edit…";
-        XInput.Text = panel ? FormatMm(selected!.Box![0]) : "";
-        YInput.Text = panel ? FormatMm(selected!.Box![1]) : "";
-        WidthInput.Text = FormatMm(panel ? selected!.Box![2] : page ? currentRender?.Size?[0] : null);
-        HeightInput.Text = FormatMm(panel ? selected!.Box![3] : page ? currentRender?.Size?[1] : null);
+        XInput.Text = panel ? GeometryNumber(selected!.Box![0]) : "";
+        YInput.Text = panel ? GeometryNumber(selected!.Box![1]) : "";
+        WidthInput.Text = GeometryNumber(panel ? selected!.Box![2] : page ? currentRender?.Size?[0] : null);
+        HeightInput.Text = GeometryNumber(panel ? selected!.Box![3] : page ? currentRender?.Size?[1] : null);
+        System.Windows.Automation.AutomationProperties.SetName(XInput, $"X ({geometryUnit})");
+        System.Windows.Automation.AutomationProperties.SetName(YInput, $"Y ({geometryUnit})");
+        System.Windows.Automation.AutomationProperties.SetName(WidthInput, $"Width ({geometryUnit})");
+        System.Windows.Automation.AutomationProperties.SetName(HeightInput, $"Height ({geometryUnit})");
         UpdateInspector();
     }
 
@@ -141,11 +218,12 @@ public partial class MainWindow
             if (panel is null && i < 2) continue;
             if (!TryMm(field.Text, i >= 2, out double value))
             {
-                Status.Text = i >= 2 ? "Width and height must be positive numbers in millimeters." : "X and Y must be numbers in millimeters.";
+                Status.Text = i >= 2 ? $"Width and height must be positive numbers ({geometryUnit})." : $"X and Y must be numbers ({geometryUnit}).";
                 field.Focus();
                 return Task.CompletedTask;
             }
-            if (field.Text.Trim() != FormatMm(current[i]) && Math.Abs(value - current[i]) > 0.00001) props.Add(key, value);
+            value *= MillimetersPerUnit;
+            if (field.Text.Trim() != GeometryNumber(current[i]) && Math.Abs(value - current[i]) > 0.00001) props.Add(key, value);
         }
         if (props.Count == 0) return Task.CompletedTask;
         object args = panel switch
@@ -153,7 +231,7 @@ public partial class MainWindow
             null => new { figure, op = "figure", props },
             { Kind: "qr" } => new { figure, op = "set", oid = panel.Oid,
                 props = props.Where(p => p.Key != "h").ToDictionary() },
-            { Kind: "inset" or "figure" } => new { figure, op = "resize", oid = panel.Oid, box = new[]
+            { Kind: "inset" or "figure" or "zoom" or "path" } => new { figure, op = "resize", oid = panel.Oid, box = new[]
                 { props.GetValueOrDefault("x", current[0]), props.GetValueOrDefault("y", current[1]),
                     props.GetValueOrDefault("w", current[2]), props.GetValueOrDefault("h", current[3]) } },
             _ => new { figure, op = "set", oid = panel.Oid, props }
@@ -173,11 +251,35 @@ public partial class MainWindow
             clearSelection: true);
     }
 
+    private sealed record ProblemRow(string Badge, string Message, string Tint, string? Oid = null)
+    {
+        public string? Hint => Oid is not null ? "Select the affected layer" : null;
+    }
+    private static ProblemRow[] PreflightRows(FigureWarning[]? warnings) => (warnings ?? []).Select(w => w.Level switch
+    {
+        "error" => new ProblemRow("Error", w.Message, "#AA2020", w.Oid),
+        "info" => new ProblemRow("Info", w.Message, "#546166", w.Oid),
+        _ => new ProblemRow("Warning", w.Message, "#88520E", w.Oid)
+    }).ToArray();
+
     private void ShowWarnings(FigureWarning[]? warnings)
     {
-        var messages = (warnings ?? []).Select(w => $"{w.Level}: {w.Message}").ToArray();
-        PreflightTab.Header = messages.Length > 0 ? $"Preflight ({messages.Length})" : "Preflight";
-        Warnings.ItemsSource = messages.Length > 0 ? messages : ["No preflight messages."];
+        int count = (warnings ?? []).Count(w => w.Level != "info");
+        PreflightTab.Header = count > 0 ? $"Preflight ({count})" : "Preflight";
+        var messages = PreflightRows(warnings);
+        Warnings.ItemsSource = messages.Length > 0 ? messages : [new("OK", "No preflight messages.", "#246B6B")];
+    }
+
+    private void ShowExportMessages(IEnumerable<string> warnings, IEnumerable<string>? notes = null) => Warnings.ItemsSource =
+        warnings.Distinct().Select(w => new ProblemRow("Export", w, "#88520E"))
+            .Concat((notes ?? []).Distinct().Select(n => new ProblemRow("Export info", n, "#546166")))
+            .Concat(PreflightRows(currentRender?.Warnings)).ToArray();
+
+    private void WarningSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (Warnings.SelectedItem is not ProblemRow { Oid: { } oid } || currentRender is not { } render) return;
+        oid = render.Labels?.FirstOrDefault(l => l.Oid == oid)?.Panel ?? oid;
+        if (render.Elements?.Any(l => l.Oid == oid) == true) Page.Select(oid);
     }
 
     internal static string FormatMm(double? value) => value?.ToString("0.####", CultureInfo.CurrentCulture) ?? "";

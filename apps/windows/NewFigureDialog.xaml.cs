@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace Fignimble.Windows;
 
@@ -9,12 +10,41 @@ public partial class NewFigureDialog : Window
     public double FigureWidth { get; private set; }
     public double FigureHeight { get; private set; }
 
-    public NewFigureDialog(double[]? size)
+    private sealed record FigureTemplateChoice(string? Key, string Label, double[]? Size)
+    {
+        public override string ToString() => Label;
+    }
+    public string? PosterTemplate { get; private set; }
+    private string blankWidth = "", blankHeight = "";
+
+    public NewFigureDialog(double[]? size) : this(size, []) { }
+
+    internal NewFigureDialog(double[]? size, IEnumerable<(string Key, string Label, double[] Size)> posters)
     {
         InitializeComponent();
-        InputWidth.Text = MainWindow.FormatMm(size is [var width, _] ? width : 183);
-        InputHeight.Text = MainWindow.FormatMm(size is [_, var height] ? height : 100);
+        InputWidth.Text = blankWidth = MainWindow.FormatMm(size is [var width, _] ? width : 183);
+        InputHeight.Text = blankHeight = MainWindow.FormatMm(size is [_, var height] ? height : 100);
+        InputTemplate.ItemsSource = new[] { new FigureTemplateChoice(null, "Blank figure", null) }
+            .Concat(posters.Select(p => new FigureTemplateChoice(p.Key, p.Label, p.Size))).ToArray();
+        InputTemplate.SelectedIndex = 0;
         Loaded += (_, _) => { InputName.Focus(); InputName.SelectAll(); };
+    }
+
+    private void TemplateChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (InputWidth is null || InputHeight is null) return;
+        if (e.RemovedItems.Count > 0 && e.RemovedItems[0] is FigureTemplateChoice { Key: null })
+        { blankWidth = InputWidth.Text; blankHeight = InputHeight.Text; }
+        if (InputTemplate.SelectedItem is FigureTemplateChoice { Key: { }, Size: [var width, var height] })
+        {
+            InputWidth.Text = MainWindow.FormatMm(width); InputHeight.Text = MainWindow.FormatMm(height);
+            InputWidth.IsEnabled = InputHeight.IsEnabled = false;
+        }
+        else
+        {
+            InputWidth.Text = blankWidth; InputHeight.Text = blankHeight;
+            InputWidth.IsEnabled = InputHeight.IsEnabled = true;
+        }
     }
 
     private void CreateClicked(object sender, RoutedEventArgs e)
@@ -32,6 +62,7 @@ public partial class NewFigureDialog : Window
             return;
         }
         FigureName = name;
+        PosterTemplate = (InputTemplate.SelectedItem as FigureTemplateChoice)?.Key;
         FigureWidth = width;
         FigureHeight = height;
         DialogResult = true;

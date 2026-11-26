@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -16,7 +17,9 @@ public sealed class TerminalPanel : Border, IDisposable
     ConPty? pty;
     bool ready;
     short cols = 100, rows = 24;
-    string? cwd, python, engineRoot;
+    string? cwd, python, engineRoot, cliPath;
+    string[]? sshArgv;
+    internal static string PowerShellExe => Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
     bool initializing, disposed;
     int generation;
     const string PageUri = "https://terminal.fignimble/terminal.html";
@@ -66,31 +69,52 @@ public sealed class TerminalPanel : Border, IDisposable
         finally { initializing = false; }
     }
 
-    public void Start(string workDir, string? pythonExe, string sourceRoot)
+    public void Start(string workDir, string? pythonExe, string sourceRoot, string? cliDirectory = null)
     {
         Stop();
-        cwd = workDir; python = pythonExe; engineRoot = sourceRoot;
+        cwd = workDir; python = pythonExe; engineRoot = sourceRoot; cliPath = cliDirectory;
         if (ready) Spawn();
     }
+
+    internal void StartRemote(string workDir, string[] argv)
+    {
+        Stop();
+        cwd = workDir;
+        sshArgv = argv;
+        if (ready) Spawn();
+    }
+
+    // CreateProcessW takes a command line, not argv. Use the Windows CRT rules, not shell escaping.
+    internal static string QuoteArgument(string arg) => "\"" + Regex.Replace(arg, "(\\\\*)(\"|\\z)", m =>
+        new string('\\', m.Groups[1].Length * 2 + (m.Groups[2].Length > 0 ? 1 : 0)) + m.Groups[2].Value) + "\"";
 
     void Spawn()
     {
         if (cwd == null || !Directory.Exists(cwd)) return;
         var env = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(e => (string)e.Key, e => (string?)e.Value ?? "", StringComparer.OrdinalIgnoreCase);
-        env["FIGNIMBLE_PROJECT"] = cwd;
-        env["PYTHONPATH"] = engineRoot + (env.TryGetValue("PYTHONPATH", out string? prior) && prior.Length > 0 ? Path.PathSeparator + prior : "");
         env["TERM"] = "xterm-256color";
         env["COLORTERM"] = "truecolor";
-        if (python is not null && Path.IsPathFullyQualified(python))
+        string shell;
+        if (sshArgv is { } args)
         {
-            string scripts = Path.GetDirectoryName(python)!;
-            env["PATH"] = scripts + Path.PathSeparator + env.GetValueOrDefault("PATH");
-            if (Path.GetDirectoryName(scripts) is { } root && File.Exists(Path.Combine(root, "pyvenv.cfg")))
-                env["VIRTUAL_ENV"] = root;
+            shell = string.Join(" ", args.Select(QuoteArgument));
         }
-        string systemPowerShell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
-        string shell = $"\"{systemPowerShell}\" -NoLogo";
+        else
+        {
+            env["FIGNIMBLE_PROJECT"] = cwd;
+            if (python is not null) env["FIGNIMBLE_SHELL_PYTHON"] = python;
+            if (!string.IsNullOrEmpty(cliPath) && Directory.Exists(cliPath)) env["PATH"] = cliPath + Path.PathSeparator + env.GetValueOrDefault("PATH");
+            env["PYTHONPATH"] = engineRoot + (env.TryGetValue("PYTHONPATH", out string? prior) && prior.Length > 0 ? Path.PathSeparator + prior : "");
+            if (python is not null && Path.IsPathFullyQualified(python))
+            {
+                string scripts = Path.GetDirectoryName(python)!;
+                env["PATH"] = scripts + Path.PathSeparator + env.GetValueOrDefault("PATH");
+                if (Path.GetDirectoryName(scripts) is { } root && File.Exists(Path.Combine(root, "pyvenv.cfg")))
+                    env["VIRTUAL_ENV"] = root;
+            }
+            shell = QuoteArgument(PowerShellExe) + " -NoLogo";
+        }
         int thisRun = generation;
         try
         {
@@ -111,7 +135,8 @@ public sealed class TerminalPanel : Border, IDisposable
     public void Stop()
     {
         Interlocked.Increment(ref generation);
-        cwd = null;
+        cwd = python = engineRoot = cliPath = null;
+        sshArgv = null;
         var p = pty;
         pty = null;
         if (p is not null) { p.RequestStop(); _ = Task.Run(p.Dispose); }

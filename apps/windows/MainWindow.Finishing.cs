@@ -16,9 +16,10 @@ public partial class MainWindow
     private async Task<JournalChoice[]> Journals()
     {
         if (journals is not null) return journals;
-        var client = engine is { Running: true } active ? active : GetEngine();
+        using var temporary = engine is { Running: true } ? null : new EngineClient(ProjectPython(null));
+        var client = temporary ?? engine!;
         var entries = await client.CallAsync<Dictionary<string, JournalPreset>>("journals");
-        return journals = entries.Select(p => new JournalChoice(p.Key, p.Value.Name, p.Value.Widths)).OrderBy(j => j.Name).ToArray();
+        return journals = entries.Select(p => new JournalChoice(p.Key, p.Value.Name, p.Value.Widths, p.Value.Dpi, p.Value.Labels)).OrderBy(j => j.Name).ToArray();
     }
 
     private async void AnnotationClicked(object sender, RoutedEventArgs e)
@@ -133,30 +134,57 @@ public partial class MainWindow
         await During("Loading export options…", async () => { choices = await Journals(); Status.Text = "Choose export options."; });
         if (choices.Length == 0) return;
         var dialog = new FormDialog(this, "Export figure");
-        var formats = new[] { "PDF", "SVG", "PNG", "TIFF", "JPEG", "EPS", "PPTX" };
+        string[] formats = ["PDF", "SVG", "PNG", "TIFF", "JPEG", "EPS", "PPTX"];
+        var table = StandaloneTable;
+        if (table is not null) formats = [.. formats, "DOCX", "XLSX", "CSV", "TSV"];
+        bool poster = currentRender?.Poster is not null;
+        bool pictures = currentRender?.Elements?.Any(e => e.Kind == "image" &&
+            System.IO.Path.GetExtension(e.Props?.Source)?.ToLowerInvariant() is not (".pdf" or ".svg")) == true;
         var format = dialog.Choice("Format", formats, formats[0]);
-        var journal = dialog.Choice("Journal resolution rules", choices.Prepend(FigureJournal), FigureJournal);
-        var resolution = dialog.Text("Resolution (dpi; raster content only)", "600");
+        var general = new JournalChoice("general", "General (300 / 600 / 1200 dpi)");
+        var journal = dialog.Choice("Journal resolution rules", new[] { general, FigureJournal }.Concat(choices), general);
+        string[] dpiPresets = ["300", "500", "600", "1000", "1200", "2400"];
+        var resolution = dialog.Choice("Resolution (dpi; raster content only)", dpiPresets, "600");
+        resolution.IsEditable = true;
         var useDark = dialog.Check("Export the figure’s dark version", darkPreview);
         var cmyk = dialog.Check("CMYK");
         var outline = dialog.Check("Convert text to outlines");
         var marks = dialog.Check("Crop marks (PDF)");
-        var bleed = dialog.Text("Bleed (mm, PDF)", "0");
+        var bleed = dialog.Text("Bleed (mm, PDF)", poster ? "3" : "0");
+        var hint = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 8) };
+        dialog.Add("", new ContentControl { Content = hint });
         dialog.Note("EPS and CMYK or outlined PDF require Ghostscript on the rendering machine. Confirm the print shop’s preferred color profile separately.");
         void Options()
         {
             string? kind = format.SelectedItem as string;
+            bool editableTable = kind is "DOCX" or "XLSX" or "CSV" or "TSV";
+            bool raster = kind is "PNG" or "TIFF" or "JPEG";
             cmyk.IsEnabled = kind is "PDF" or "EPS" or "TIFF" or "JPEG";
             outline.IsEnabled = kind is "PDF" or "EPS" or "SVG";
             marks.IsEnabled = bleed.IsEnabled = kind == "PDF";
+            journal.IsEnabled = resolution.IsEnabled = useDark.IsEnabled = !editableTable;
+            var selected = journal.SelectedItem as JournalChoice;
+            if (selected?.Key == "") selected = choices.FirstOrDefault(j => j.Key == currentRender?.Journal?.Key);
+            bool posterRules = poster && (selected is null || selected.Key == "general");
+            int photos = selected?.Dpi?.GetValueOrDefault("photo", 300) ?? 300;
+            int combination = selected?.Dpi?.GetValueOrDefault("combination", 600) ?? 600;
+            int line = selected?.Dpi?.GetValueOrDefault("line", 1200) ?? 1200;
+            int suggested = raster ? posterRules ? 300 : pictures ? combination : line : kind == "PPTX" ? posterRules ? 200 : 300 : 600;
+            resolution.Text = suggested.ToString(CultureInfo.InvariantCulture);
+            hint.Text = editableTable ? "Exports editable cells rather than a picture."
+                : kind == "PPTX" ? "PowerPoint contains a vector copy and a PNG fallback at the chosen resolution."
+                : posterRules ? "Posters use 150–300 dpi at full size. PDF stays vector; raster output is capped at 300 dpi."
+                : raster ? $"{line} dpi for line art, {combination} dpi for figures with pictures. TIFF and JPEG may be raised to meet the required resolution."
+                : $"Vector paths stay sharp. The export checks raster images against the {photos} dpi photo requirement.";
         }
         format.SelectionChanged += (_, _) => Options();
+        journal.SelectionChanged += (_, _) => Options();
         Options();
         int dpi = 600;
         double edge = 0;
         if (!dialog.Confirm("Continue", () =>
         {
-            if (!int.TryParse(resolution.Text, NumberStyles.None, CultureInfo.InvariantCulture, out dpi) || dpi is < 72 or > 2400)
+            if (resolution.IsEnabled && (!int.TryParse(resolution.Text, NumberStyles.None, CultureInfo.InvariantCulture, out dpi) || dpi is < 72 or > 2400))
                 return "Enter a whole-number resolution between 72 and 2400 dpi.";
             if (bleed.IsEnabled && (!TryMm(bleed.Text, false, out edge) || edge < 0 || edge > 100)) return "Enter bleed between 0 and 100 mm.";
             return null;
@@ -168,6 +196,8 @@ public partial class MainWindow
         {
             if (!Path.GetExtension(save.FileName).Equals("." + ext, StringComparison.OrdinalIgnoreCase))
             { Status.Text = $"Use the .{ext} filename extension for this format."; return; }
+            if (table is not null && ext is "docx" or "xlsx" or "csv" or "tsv")
+            { await ExportTable(figure, table.Oid, save.FileName); return; }
             await ExportWithOptions(figure, save.FileName, dpi, ((JournalChoice)journal.SelectedItem).Key,
                 useDark.IsChecked == true, cmyk.IsEnabled && cmyk.IsChecked == true, outline.IsEnabled && outline.IsChecked == true,
                 bleed.IsEnabled ? edge : 0, marks.IsEnabled && marks.IsChecked == true);

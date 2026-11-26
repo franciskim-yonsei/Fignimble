@@ -2,6 +2,7 @@
 import json
 import os
 import queue
+import shlex
 import subprocess
 import sys
 import threading
@@ -57,6 +58,27 @@ for line in sys.stdin:
 '''
 
 
+def test_remote_engine_package_bootstrap_quotes_paths_and_limits_packages(tmp_path):
+    fake = tmp_path / "ssh helper.py"
+    fake.write_text('import json, sys\nprint(json.dumps(sys.argv[1:]))\n', encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "engine"), PYTHONUTF8="1",
+               FIGNIMBLE_SSH=f'"{Path(sys.executable).as_posix()}" "{fake.as_posix()}"', FIGNIMBLE_REMOTE="")
+    args = dict(cmd="install_remote_engine_packages", host="server", python="~/work space/bin/python")
+    payload = "\n".join(json.dumps(dict(args, id=i, packages=packages)) for i, packages in
+                        [(1, ["matplotlib", "pillow"]), (2, ["-r", "other.txt"])]) + "\n"
+    result = subprocess.run([sys.executable, "-m", "fignimble.rpc"], input=payload, env=env,
+                            text=True, encoding="utf-8", capture_output=True, timeout=20, check=True)
+    replies = {reply["id"]: reply for reply in map(json.loads, result.stdout.splitlines())}
+    assert "only missing Fignimble" in replies[2]["error"]
+    assert replies[1]["result"]["ok"]
+    argv = json.loads(replies[1]["result"]["output"])
+    assert argv[-3:-1] == ["server", "--"]
+    sh, opt, script = shlex.split(argv[-1])
+    assert (sh, opt) == ("sh", "-c")
+    assert shlex.split(script) == ["~/work space/bin/python", "-m", "pip", "install",
+                                   "--disable-pip-version-check", "--no-input", "--", "matplotlib", "pillow"]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="exercises a native Windows mirror path")
 def test_windows_tunnel_local_paths_and_edits(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "engine"))
@@ -106,7 +128,14 @@ def test_windows_tunnel_local_paths_and_edits(tmp_path, monkeypatch):
 
         try:
             assert call("remote_list", host="fixture")["entries"][-1] == {"name": "fig1.py", "dir": False}
-            assert Path(call("open", project=str(project))["project"]) == project
+            opened = call("open", project=str(project))
+            assert Path(opened["project"]) == project
+            assert opened["remotePath"] == "/home/example/project"
+            shell = opened["terminalArgv"]
+            assert shell[:3] == [Path(sys.executable).as_posix(), fake.as_posix(), "-t"]
+            assert shell[-3:-1] == ["--", "fixture"]
+            assert shlex.split(shell[-1])[:2] == ["sh", "-c"]
+            assert shlex.split(shell[-1])[2].startswith("cd /home/example/project || exit;")
             path = project / "fig1.py"
             assert path.read_text() == "# figure source\n"
             figure = call("figure")

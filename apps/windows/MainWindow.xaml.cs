@@ -19,18 +19,30 @@ public partial class MainWindow : Window
     private bool validFigure;
     private bool busy;
 
-    public MainWindow(string? initialPath)
+    public MainWindow(string? initialPath) : this(initialPath,
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Fignimble")) { }
+
+    internal MainWindow(string? initialPath, string settingsDirectory)
     {
+        this.settingsDirectory = settingsDirectory;
         InitializeComponent();
         SetupWorkspace();
+        SetupArrangement();
+        SetupCode();
+        SetupDrawing();
+        SetupViewPreferences();
+        RestoreWindowFrame();
+        LoadPythonSettings();
+        SetupMenus();
         reloadTimer.Tick += async (_, _) =>
         {
-            if (busy || editingSource || Page.IsDragging) return;
+            if (busy || Page.IsDragging) return;
             reloadTimer.Stop();
             await Reload();
         };
         Page.EditCompleted += async edit => await CanvasEdited(edit);
         Page.DividerEdited += async (oid, index, delta) => await MoveDivider(oid, index, delta);
+        Page.GuideEdited += async (index, value) => await MoveCanvasGuide(index, value);
         Page.PlotTextClicked += async (layer, text) => await EditClickedPlotText(layer, text);
         Page.SelectionChanged += CanvasSelectionChanged;
         UpdateControls();
@@ -43,14 +55,16 @@ public partial class MainWindow : Window
     {
         reloadTimer.Stop();
         thumbnailTimer.Stop();
-        terminal?.Dispose();
+        SaveWindowFrame();
+        SaveViewPreferences();
+        StopProjectShells();
         engine?.Dispose();
         base.OnClosed(e);
     }
 
     private EngineClient GetEngine(string? targetProject = null)
     {
-        string python = EngineClient.ResolvePython(targetProject ?? project);
+        string python = ProjectPython(targetProject ?? project);
         if (engine is { Running: true, Remote: null } && string.Equals(engine.Python, python, StringComparison.OrdinalIgnoreCase)) return engine;
         return SwitchEngine(python, null);
     }
@@ -62,10 +76,18 @@ public partial class MainWindow : Window
         var client = new EngineClient(python, remote);
         client.Notification += kind =>
         {
-            if (kind is not ("changed" or "rendered")) return;
+            if (kind is not ("changed" or "rendered" or "disconnected")) return;
             Dispatcher.BeginInvoke(() =>
             {
                 if (engine != client) return;
+                if (kind == "disconnected")
+                {
+                    reloadTimer.Stop();
+                    thumbnailTimer.Stop();
+                    if (project is not null && client.Remote is { } target)
+                        Status.Text = $"Disconnected from {target.Host}. Use SSH → Reconnect to reopen this project.";
+                    return;
+                }
                 if (kind == "rendered") { thumbnailTimer.Start(); return; }
                 reloadTimer.Stop();
                 reloadTimer.Start();
@@ -96,17 +118,22 @@ public partial class MainWindow : Window
         Figures.IsEnabled = !busy && Figures.HasItems;
         NewFigureButton.IsEnabled = ReloadButton.IsEnabled = !busy && project is not null;
         ImportButton.IsEnabled = SampleButton.IsEnabled = !busy && validFigure;
-        Geometry.IsEnabled = !busy && validFigure;
-        AnnotationButton.IsEnabled = !busy && validFigure;
+        Geometry.IsEnabled = PropertyEditor.IsEnabled = !busy && validFigure;
+        AnnotationButton.IsEnabled = CanvasDrawingTools.IsEnabled = !busy && validFigure;
         UpdateLayerControls();
         UndoButton.IsEnabled = !busy && state?.CanUndo == true;
         RedoButton.IsEnabled = !busy && state?.CanRedo == true;
         ExportButton.IsEnabled = !busy && validFigure;
         Page.IsEnabled = !busy && validFigure;
         MoreButton.IsEnabled = !busy && project is not null;
+        RecentButton.Visibility = project is null ? Visibility.Visible : Visibility.Collapsed;
+        RecentButton.IsEnabled = !busy;
+        PythonSetupButton.Visibility = project is null ? Visibility.Visible : Visibility.Collapsed;
+        PythonSetupButton.IsEnabled = !busy && engine?.Remote is null;
         TerminalButton.IsEnabled = TerminalTab.IsEnabled = !busy && project is not null;
         InspectorFirst.IsEnabled = InspectorSecond.IsEnabled = !busy && validFigure;
-        EditSourceButton.IsEnabled = !busy && currentRender is not null;
+        UpdateCodeControls();
+        UpdateReviewControls();
     }
 
     private async void OpenClicked(object sender, RoutedEventArgs e)
@@ -118,6 +145,7 @@ public partial class MainWindow : Window
 
     private Task OpenProject(string path) => During("Opening project…", async () =>
     {
+        if (!ConfirmDiscardDrafts()) return;
         string fullPath = Path.GetFullPath(path);
         bool file = File.Exists(fullPath);
         await OpenProjectCore(file ? Path.GetDirectoryName(fullPath)! : fullPath,
@@ -130,18 +158,21 @@ public partial class MainWindow : Window
         ResetProject();
         await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
         project = folder;
+        UpdateShellHeader();
         if (TerminalRequested) StartShell();
         Title = $"Fignimble — {Path.GetFileName(Path.TrimEndingDirectorySeparator(folder))}";
         await RefreshProject(first);
+        RememberProject(shownFigure);
     }
 
     private void ResetProject()
     {
         reloadTimer.Stop();
-        terminal?.Stop();
-        terminalFolder = null;
+        StopProjectShells();
+        remoteOpen = null;
         state = null;
         project = null;
+        UpdateShellHeader();
         zoom = 1;
         Viewport.ScrollToHome();
         Figures.ItemsSource = null;
@@ -154,11 +185,22 @@ public partial class MainWindow : Window
     private Task Reload() => project is null ? Task.CompletedTask :
         During("Refreshing…", () => RefreshProject((Figures.SelectedItem as FigureCard)?.Name, external: true));
 
-    private async void ReloadClicked(object sender, RoutedEventArgs e) => await Reload();
+    private Task RenderAgain() => project is null ? Task.CompletedTask : During("Rendering again…", async () =>
+    {
+        if (shownFigure is { } figure) await RenderFigure(figure, external: true, force: true);
+        await ReadState(shownFigure);
+    });
+
+    private async void ReloadClicked(object sender, RoutedEventArgs e) => await RenderAgain();
 
     private async Task RefreshProject(string? preferred, bool external = false)
     {
         await ReadState(preferred);
+        if (external && (CodeDirty || CaptionDirty) && (Figures.SelectedItem as FigureCard)?.Name != shownFigure)
+        {
+            Status.Text = "The current figure is no longer available. Your draft is still in the drawer.";
+            return;
+        }
         if (Figures.SelectedItem is FigureCard card) await RenderFigure(card.Name, external);
         else
         {
@@ -171,18 +213,27 @@ public partial class MainWindow : Window
     {
         state = await engine!.CallAsync<ProjectState>("state");
         SetFigureCards(state.Figures, preferred);
+        RefreshCodeFiles();
+        RefreshHistory();
     }
 
     private async void FigureChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!busy && Figures.SelectedItem is FigureCard card && card.Name != shownFigure)
-            await During($"Rendering {card.Name}…", () => RenderFigure(card.Name));
+        if (busy || restoringFigure || Figures.SelectedItem is not FigureCard card || card.Name == shownFigure) return;
+        if (!ConfirmDiscardDrafts())
+        {
+            restoringFigure = true;
+            try { Figures.SelectedItem = figureCards.FirstOrDefault(f => f.Name == shownFigure); }
+            finally { restoringFigure = false; }
+            return;
+        }
+        await During($"Rendering {card.Name}…", () => RenderFigure(card.Name));
     }
 
-    private async Task RenderFigure(string name, bool external = false)
+    private async Task RenderFigure(string name, bool external = false, bool force = false)
     {
         if (name != shownFigure) ClearFigure();
-        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name, dark = darkPreview }), external);
+        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name, dark = darkPreview, force }), external);
     }
 
     private void ClearFigure()
@@ -197,17 +248,19 @@ public partial class MainWindow : Window
         EmptyCanvasCard.Visibility = Visibility.Visible;
         EmptyCanvas.Text = project is null ? "Open a local or SSH project, or start a new one." : "Create or select a figure to get started.";
         CanvasSize.Text = "";
-        SourceTitle.Text = "Figure source";
-        SourceText.Clear();
+        ClearCode();
+        RefreshCaption(null);
+        if (state is null) RefreshHistory();
         SyncGeometry();
         ShowWarnings(null);
     }
 
     private void ShowRender(FigureRender render, bool external = false)
     {
-        string source = File.Exists(render.File) ? File.ReadAllText(render.File) : "";
+        string source = File.Exists(render.File) ? NormalizeSource(File.ReadAllText(render.File)) : "";
         // A source change can reorder the OIDs. Asset-only changes and duplicate notifications can keep the selection.
-        bool preserve = shownFigure == render.Figure && (!external || source == SourceText.Text);
+        bool preserve = shownFigure == render.Figure && (!external || source == renderedSource);
+        renderedSource = source;
         shownFigure = render.Figure;
         currentRender = render;
         validFigure = render.Error is null && render.Size is [> 0, > 0];
@@ -220,9 +273,8 @@ public partial class MainWindow : Window
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
         CanvasSize.Text = validFigure ? $"{render.Size![0]:g} × {render.Size[1]:g} mm" : "";
         UpdateFigureCard(render.Figure, render.Thumb, render.Error, render.Warnings?.Count(w => w.Level != "info") ?? 0);
-        double scroll = preserve ? SourceText.VerticalOffset : 0;
-        SourceTitle.Text = Path.GetFileName(render.File) ?? "Figure source";
-        if (SourceText.Text != source) { SourceText.Text = source; SourceText.ScrollToVerticalOffset(scroll); }
+        RefreshCode(render, source);
+        RefreshCaption(render);
         SyncGeometry();
         ShowWarnings(render.Warnings);
         bool empty = render.Elements is not { Length: > 0 };
@@ -237,7 +289,7 @@ public partial class MainWindow : Window
             ? currentRender?.Elements?.FirstOrDefault(e => e.Oid == edit.Oids[0])?.Kind == "layout"
                 ? new { figure = name, op = "set", oid = edit.Oids[0], props = new { x = box.X, y = box.Y, w = box.Width, h = box.Height } }
                 : new { figure = name, op = "resize", oid = edit.Oids[0], box = new[] { box.X, box.Y, box.Width, box.Height } }
-            : new { figure = name, op = "move", oids = edit.Oids, dx = edit.Delta.X, dy = edit.Delta.Y };
+            : new { figure = name, op = "move", oids = edit.Oids, dx = edit.Delta.X, dy = edit.Delta.Y, labels = edit.MoveAllLabels ? "all" : null };
         return EditFigure(name, args, "Updating figure…");
     }
 
@@ -280,20 +332,32 @@ public partial class MainWindow : Window
             throw new ArgumentException("Choose a supported figure extension.");
         var result = await engine!.CallAsync<ExportResult>("export", new { figure, path, format = format[1..], dpi,
             dark, cmyk, outline, bleed, marks, journal = string.IsNullOrEmpty(journal) ? null : journal });
-        if (result.Warnings is { Length: > 0 } warnings)
+        var warnings = result.Warnings ?? [];
+        var notes = result.Resolution?.Notes ?? [];
+        if (warnings.Length + notes.Length > 0)
         {
-            Warnings.ItemsSource = warnings.Select(w => "Export: " + w).Concat(Warnings.Items.Cast<string>()).Distinct().ToArray();
+            ShowExportMessages(warnings, notes);
             ShowDrawer(PreflightTab);
-            Status.Text = $"Exported {path} · {warnings.Length} warning(s); see Preflight.";
         }
-        else Status.Text = $"Exported {path}";
+        string density = result.Resolution?.Dpi is { } actual && format is ".png" or ".tiff" or ".jpg" or ".jpeg"
+            ? $" · {actual} dpi" : "";
+        Status.Text = $"Exported {path}" + density + (warnings.Length > 0 ? $" · {warnings.Length} warning(s); see Preflight." : "");
     });
 
     private async void HandleKey(object sender, KeyEventArgs e)
     {
+        if (Page.IsKeyboardFocusWithin && e.Key == Key.Space) { e.Handled = true; return; }
+        if (SourceText.IsKeyboardFocusWithin || (TerminalRequested && TerminalHost.IsKeyboardFocusWithin) ||
+            Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase) return;
         var modifiers = Keyboard.Modifiers;
-        if (!busy && Keyboard.FocusedElement is not System.Windows.Controls.Primitives.TextBoxBase &&
+        if (!busy && MenuShortcut(e.Key, modifiers) is { } menuTask) { e.Handled = true; await menuTask; return; }
+        if (!busy && DrawingShortcut(e.Key, modifiers)) { e.Handled = true; return; }
+        if (!busy && e.Key == Key.Escape && Page.Tool != CanvasTool.Select && Page.IsKeyboardFocusWithin)
+        { Page.SetTool(CanvasTool.Select); e.Handled = true; return; }
+        if (!busy &&
             FigureShortcut(e.Key, modifiers) is { } shortcut) { e.Handled = true; await shortcut; return; }
+        if (e.Key == Key.Escape && !busy && Page.CancelCrop()) { e.Handled = true; return; }
+        if (e.Key == Key.Escape && !busy && !Page.IsDragging && Page.ClearPanelPart()) { e.Handled = true; return; }
         if (e.Key == Key.Escape && !busy && !Page.IsDragging && Page.SelectedIds.Count > 0)
         {
             e.Handled = true;

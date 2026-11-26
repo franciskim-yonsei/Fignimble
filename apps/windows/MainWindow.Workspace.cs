@@ -6,7 +6,6 @@ using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using ICSharpCode.AvalonEdit.Highlighting;
 
 namespace Fignimble.Windows;
 
@@ -67,11 +66,10 @@ public partial class MainWindow
 
     private void SetupWorkspace()
     {
-        SourceText.SyntaxHighlighting = HighlightingManager.Instance.GetDefinitionByExtension(".py");
         RefreshFigureEmpty();
         thumbnailTimer.Tick += async (_, _) =>
         {
-            if (busy || editingSource || Page.IsDragging) return;
+            if (busy || Page.IsDragging) return;
             thumbnailTimer.Stop();
             if (project is not { } folder || engine is not { Running: true } client) return;
             try
@@ -144,7 +142,7 @@ public partial class MainWindow
     private void SyncDrawer()
     {
         if (!TerminalRequested || project is null || engine is null) return;
-        if (terminalFolder != project) StartShell();
+        if (shellTab is null) StartShell();
         else terminal?.FocusTerminal();
     }
 
@@ -152,12 +150,18 @@ public partial class MainWindow
     {
         var layer = Page.Selection;
         int count = Page.SelectedIds.Count;
-        InspectorTitle.Text = count > 1 ? $"{count} layers" : layer?.Props?.Name ??
+        InspectorTitle.Text = count > 1 ? $"{count} layers" : layer?.Kind == "label" ? $"Panel label · {layer.Text}" : layer?.Props?.Name ??
             (layer?.Props?.Source is { } path ? Path.GetFileName(path) : layer?.Method ?? (currentRender?.Poster is null ? "Page" : "Poster"));
         InspectorHint.Text = count > 1 ? "Move or arrange the selection together." : layer is null
             ? (validFigure ? "Page size and shared style" : "Open or create a figure to edit its settings.")
             : layer.Props is { Locked: true } ? "Locked layer" : layer.Props is { Hidden: true } ? "Hidden layer"
             : layer.Kind == "panel" ? "Python panel · redraws when resized" : $"{layer.Kind ?? "Figure"} layer";
+        var location = layer?.Code ?? layer?.Site;
+        InspectorSource.Text = location?.File is { } file && project is { } folder
+            ? Path.GetRelativePath(folder, file) + (location.Line is { } line ? $":{line}" : "") : "";
+        InspectorSource.Visibility = InspectorSource.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        InspectorError.Text = layer?.Error?.Trim().Split('\n').LastOrDefault() ?? "";
+        InspectorError.Visibility = InspectorError.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         InspectorActionsTitle.Text = count == 0 ? "PROJECT STYLE" : "SELECTED LAYER";
         void Action(Button b, string? caption, string tag)
         {
@@ -167,7 +171,8 @@ public partial class MainWindow
         }
         var options = !validFigure ? (null, "", null, "") : count > 1 ? ("Arrange ▾", "arrange", null, "")
             : layer is null ? ("Plot style…", "style", "Panel lettering…", "labels")
-            : !FigureCanvas.Unlocked(layer) ? (null, "", null, "") : layer.Kind switch
+            : !FigureCanvas.Unlocked(layer) ? (null, "", null, "")
+            : layer.Parent is not null ? ("Edit source…", "source", null, "") : layer.Kind switch
             {
                 "panel" => ("Edit source…", "source", layer.Texts is { Length: > 0 } ? "Plot text…" : null, "plot-text"),
                 "image" => ("Crop…", "crop", "Rotate…", "rotate"),
@@ -178,6 +183,7 @@ public partial class MainWindow
         Action(InspectorFirst, options.Item1, options.Item2);
         Action(InspectorSecond, options.Item3, options.Item4);
         InspectorActionsTitle.Visibility = options.Item1 is null ? Visibility.Collapsed : Visibility.Visible;
+        RefreshProperties(layer);
     }
 
     private async void InspectorActionClicked(object sender, RoutedEventArgs e)

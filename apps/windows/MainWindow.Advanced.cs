@@ -22,8 +22,11 @@ public partial class MainWindow
     private Task MoveDivider(string oid, int index, double delta) => shownFigure is not { } figure ? Task.CompletedTask :
         EditFigure(figure, new { figure, op = "divider", oid, index, delta }, "Resizing layout tracks…");
 
-    private Task AddImageInset() => shownFigure is { } figure && Page.Selection is { Kind: "image" } image && FigureCanvas.Unlocked(image)
-        ? EditFigure(figure, new { figure, op = "add_zoom", oids = new[] { image.Oid } }, "Adding image zoom inset…") : Task.CompletedTask;
+    private bool CanAddZoom => !busy && validFigure && (Page.Selection is { Kind: "image" } image && FigureCanvas.Movable(image) ||
+        Page.SelectedIds.Count == 2 && Page.Selections.All(e => FigureCanvas.Movable(e) && e.Kind is "panel" or "image" or "inset"));
+
+    private Task AddImageInset() => shownFigure is { } figure && CanAddZoom
+        ? EditFigure(figure, new { figure, op = "add_zoom", oids = Page.SelectedIds }, "Adding zoom box…") : Task.CompletedTask;
 
     private Task ChooseScaleBar()
     {
@@ -64,7 +67,12 @@ public partial class MainWindow
         string font = StringValue("font", "");
         var fontBox = dialog.Text(labels ? "Font (blank inherits the plot font)" : "Font family", font);
         Number("size", "Text size (pt)", labels ? 8 : 7);
-        ComboBox? numbering = null, casing = null;
+        ComboBox? numbering = null, casing = null, weight = null, slant = null, palette = null;
+        CheckBox? despine = null, alignAxes = null;
+        TextBox? color = null, swatches = null;
+        bool DespineStart() => !style.Props.TryGetValue("despine", out var v) || v.ValueKind != JsonValueKind.False;
+        bool AlignAxesStart() => !style.Props.TryGetValue("align_axes", out var v) || v.ValueKind != JsonValueKind.False;
+        string paletteStart = StringValue("palette", "");
         string pattern = "{}", numberingStart = "alpha", caseStart = "lower";
         TextBox? format = null;
         if (labels)
@@ -78,12 +86,28 @@ public partial class MainWindow
             format = dialog.Text("Format ({} is replaced by the label)", pattern);
             Number("dx", "Offset X (mm)", 0, false);
             Number("dy", "Offset Y (mm)", 0, false);
+            weight = dialog.Choice("Weight", new[] { "normal", "bold" }, StringValue("weight", "bold"));
+            slant = dialog.Choice("Style", new[] { "normal", "italic" }, StringValue("style", "normal"));
+            color = dialog.Text("Color (hex)", StringValue("color", "#000000"));
         }
         else
         {
             Number("linewidth", "Line width (pt)", 0.6);
             Number("min_font", "Minimum text size for preflight (pt)", 5);
+            Number("min_dpi", "Minimum picture resolution for preflight (dpi)", 300);
+            despine = dialog.Check("Hide top and right plot axes", DespineStart());
+            alignAxes = dialog.Check("Align adjacent plot areas", AlignAxesStart());
+            string[] palettes = ["", "okabe-ito", "tol-bright", "tol-muted", "tol-vibrant", "colorbrewer-set2", "colorbrewer-dark2", "tableau", "Custom"];
+            bool isCustom = style.Props.TryGetValue("palette", out var pal) && pal.ValueKind is JsonValueKind.Array or JsonValueKind.Object;
+            if (isCustom) paletteStart = "Custom";
+            palette = dialog.Choice("Palette (blank uses default)", palettes, paletteStart);
+            swatches = dialog.Text("Custom swatches, one #RRGGBB or name=#RRGGBB per line", !isCustom ? "" : pal.ValueKind == JsonValueKind.Object
+                ? string.Join('\n', pal.EnumerateObject().Select(s => $"{s.Name}={s.Value}"))
+                : string.Join('\n', pal.EnumerateArray().Select(s => s.ToString())), multiline: true);
+            swatches.IsEnabled = paletteStart == "Custom";
+            palette.SelectionChanged += (_, _) => swatches.IsEnabled = Equals(palette.SelectedItem, "Custom");
         }
+        string? originalSwatches = swatches?.Text;
         var props = new Dictionary<string, object?>();
         if (!dialog.Confirm("Apply", () =>
         {
@@ -98,6 +122,36 @@ public partial class MainWindow
             }
             if (numbering?.SelectedItem is string n && n != numberingStart) props["numbering"] = n;
             if (casing?.SelectedItem is string c && c != caseStart) props["case"] = c;
+            if (weight?.SelectedItem is string w && w != StringValue("weight", "bold")) props["weight"] = w;
+            if (slant?.SelectedItem is string s && s != StringValue("style", "normal")) props["style"] = s;
+            if (color is not null && color.Text.Trim() != StringValue("color", "#000000"))
+            {
+                if (!HexColor(color.Text.Trim())) return "Enter a hex color, such as #000000.";
+                props["color"] = color.Text.Trim();
+            }
+            if (despine is not null && despine.IsChecked != DespineStart()) props["despine"] = despine.IsChecked == true;
+            if (alignAxes is not null && alignAxes.IsChecked != AlignAxesStart()) props["align_axes"] = alignAxes.IsChecked == true;
+            if (palette?.SelectedItem is string pick)
+            {
+                if (pick == "Custom" && swatches is not null && (paletteStart != "Custom" || swatches.Text != originalSwatches))
+                {
+                    string[] entries = NormalizeSource(swatches.Text).Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                    if (entries.Length == 0) return "Enter at least one custom swatch.";
+                    if (entries.All(HexColor)) props["palette"] = entries;
+                    else
+                    {
+                        var colors = new Dictionary<string, string>();
+                        foreach (string entry in entries)
+                        {
+                            string[] sides = entry.Split('=', 2, StringSplitOptions.TrimEntries);
+                            if (sides is not [var name, var code] || name.Length == 0 || !HexColor(code) || !colors.TryAdd(name, code))
+                                return "Use unique names with hex colors, or a list of hex colors without names.";
+                        }
+                        props["palette"] = colors;
+                    }
+                }
+                else if (pick != paletteStart) props["palette"] = pick == "" ? null : pick;
+            }
             if (format is not null && format.Text != pattern)
             {
                 string remainder = format.Text.Replace("{}", "");
@@ -109,6 +163,8 @@ public partial class MainWindow
         }) || props.Count == 0 || !StillEditing(original)) return Task.CompletedTask;
         return ApplyStyle(figure, labels ? "labels" : "style", props);
     }
+
+    private static bool HexColor(string s) => s.Length == 7 && s[0] == '#' && s.Skip(1).All(Uri.IsHexDigit);
 
     private Task ApplyStyle(string figure, string op, Dictionary<string, object?> props) => EditFigure(figure,
         new { figure, op, props }, "Updating style…");

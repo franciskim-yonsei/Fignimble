@@ -110,6 +110,25 @@ def test_new_figure_undo_redo(tmp_path, make, files):
         s.close()
 
 
+def test_inline_table_cell_checks_current_value_and_preserves_other_edits(tmp_path):
+    csv = tmp_path / "cells.csv"
+    csv.write_text("A;B\n\n1;2\n", encoding="utf-8")
+    (tmp_path / "fig1.py").write_text('from fignimble import Figure\nfig = Figure()\nfig.table("cells.csv")\n', encoding="utf-8")
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        s.render("fig1")
+        csv.write_text("A;B\n3;2\n", encoding="utf-8")
+        args = dict(figure="fig1", op="table_cell", oid="0", row=1, column=1, expected="2", text="4")
+        assert s.edit(args)["ok"]
+        assert csv.read_text(encoding="utf-8") == "A;B\n3;4\n"
+        stale = s.edit(args)
+        assert not stale["ok"] and "changed" in stale["error"]
+        assert s.undo({})["ok"]
+        assert csv.read_text(encoding="utf-8") == "A;B\n3;2\n"
+    finally:
+        s.close()
+
+
 def test_import_panel_uses_portable_path_and_is_undoable(tmp_path):
     from fignimble.templates import new_project
 
@@ -320,6 +339,20 @@ def test_align_distribute(session):
     assert 'fig.image("images/schematic.svg", x=0, y=63' in t
     session.undo({"figure": "fig1"})
     session.undo({"figure": "fig1"})
+
+
+def test_export_general_overrides_figure_journal(tmp_path):
+    source = tmp_path / "fig1.py"
+    source.write_text('from fignimble import Figure\nfig = Figure(width=25.4, height=25.4, journal="cell")\n'
+                      'fig.line(5, 5, 20, 20)\n', encoding="utf-8")
+    s = Session(str(tmp_path), sys.executable)
+    try:
+        path = tmp_path / "out.tiff"
+        args = {"figure": "fig1", "path": str(path), "format": "tiff", "dpi": 300}
+        assert s.export(args)["resolution"]["dpi"] == 1000
+        assert s.export({**args, "journal": "general"})["resolution"]["dpi"] == 1200
+    finally:
+        s.close()
 
 
 def test_figure_size(session):

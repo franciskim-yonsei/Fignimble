@@ -7,6 +7,15 @@
         FontFamily="Segoe UI" FontSize="12" UseLayoutRounding="True" PreviewKeyDown="HandleKey">
   <Window.Resources><ResourceDictionary Source="WorkspaceTheme.xaml"/></Window.Resources>
   <DockPanel Background="{StaticResource WorkspacePanel}" TextElement.Foreground="{StaticResource WorkspaceInk}">
+    <Menu DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}">
+      <MenuItem x:Name="FileMenu" Header="_File"/>
+      <MenuItem x:Name="EditMenu" Header="_Edit"/>
+      <MenuItem x:Name="InsertMenu" Header="_Insert"/>
+      <MenuItem x:Name="ObjectMenu" Header="_Object"/>
+      <MenuItem x:Name="LabelsMenu" Header="_Labels"/>
+      <MenuItem x:Name="ViewMenu" Header="_View"/>
+      <MenuItem x:Name="WindowMenu" Header="_Window"/>
+    </Menu>
     <Border DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,0,0,1">
       <WrapPanel Margin="9,5" VerticalAlignment="Center">
         <TextBlock Text="FIGNIMBLE" FontWeight="Bold" Foreground="{StaticResource WorkspaceAccent}" Margin="4,0,10,0" VerticalAlignment="Center"/>
@@ -32,13 +41,13 @@
     </Border>
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="196" MinWidth="125"/>
-        <ColumnDefinition Width="4"/>
+        <ColumnDefinition x:Name="SideColumn" Width="196" MinWidth="125"/>
+        <ColumnDefinition x:Name="SideSplitColumn" Width="4"/>
         <ColumnDefinition Width="*" MinWidth="280"/>
-        <ColumnDefinition Width="4"/>
-        <ColumnDefinition Width="237" MinWidth="172"/>
+        <ColumnDefinition x:Name="InspectorSplitColumn" Width="4"/>
+        <ColumnDefinition x:Name="InspectorColumn" Width="237" MinWidth="172"/>
       </Grid.ColumnDefinitions>
-      <Grid Grid.Column="0">
+      <Grid x:Name="SidePanel" Grid.Column="0">
         <Grid.RowDefinitions><RowDefinition Height="2*" MinHeight="110"/><RowDefinition Height="4"/><RowDefinition Height="3*" MinHeight="130"/></Grid.RowDefinitions>
         <DockPanel Margin="8,6,8,4">
           <DockPanel DockPanel.Dock="Top" Margin="4,2,0,4" LastChildFill="False">
@@ -82,8 +91,12 @@
                    Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <DockPanel ToolTip="{Binding Title}">
-                  <TextBlock DockPanel.Dock="Left" Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource WorkspaceMuted}" Width="20" VerticalAlignment="Center"/>
+                <DockPanel ToolTip="{Binding Hint}" Margin="{Binding Indent}">
+                  <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Width="19" MinHeight="20" FontSize="11" Padding="1" Click="RowLayerToggle"
+                          Content="{Binding Lock}" Visibility="{Binding ToggleVisibility}" Tag="locked" ToolTip="{Binding LockAction}" AutomationProperties.Name="{Binding LockAction}"/>
+                  <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Width="19" MinHeight="20" FontSize="11" Padding="1" Click="RowLayerToggle"
+                          Content="{Binding Eye}" Visibility="{Binding ToggleVisibility}" Tag="hidden" ToolTip="{Binding VisibilityAction}" AutomationProperties.Name="{Binding VisibilityAction}"/>
+                  <TextBlock DockPanel.Dock="Left" Text="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" Foreground="{Binding GlyphTint}" Width="20" VerticalAlignment="Center"/>
                   <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                 </DockPanel>
               </DataTemplate>
@@ -91,7 +104,7 @@
           </ListBox>
         </DockPanel>
       </Grid>
-      <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch"/>
+      <GridSplitter x:Name="SideSplitter" Grid.Column="1" HorizontalAlignment="Stretch"/>
       <Grid Grid.Column="2">
         <Grid.RowDefinitions>
           <RowDefinition Height="*" MinHeight="155"/>
@@ -99,10 +112,17 @@
           <RowDefinition x:Name="DrawerRow" Height="185" MinHeight="75"/>
         </Grid.RowDefinitions>
         <DockPanel Background="{StaticResource WorkspaceCanvas}">
+          <Border DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,0,0,1">
+            <WrapPanel HorizontalAlignment="Center" Margin="5,2">
+              <WrapPanel x:Name="CanvasDrawingTools" AutomationProperties.Name="Canvas drawing tools"/>
+              <WrapPanel x:Name="CanvasArrangeTools" AutomationProperties.Name="Canvas arrangement tools"/>
+            </WrapPanel>
+          </Border>
           <Border DockPanel.Dock="Bottom" Background="{StaticResource WorkspaceBar}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="0,1,0,0">
             <DockPanel Margin="6,2">
               <Button x:Name="DrawerButton" DockPanel.Dock="Right" Click="ToggleDrawerClicked" Style="{StaticResource ToolButton}" Content="Hide drawer" ToolTip="Toggle code, preflight, and terminal drawer"/>
               <TextBlock x:Name="CanvasSize" DockPanel.Dock="Left" Foreground="{StaticResource WorkspaceMuted}" VerticalAlignment="Center" Margin="4,0"/>
+              <TextBlock x:Name="PointerReadout" DockPanel.Dock="Left" Foreground="{StaticResource WorkspaceMuted}" VerticalAlignment="Center" Margin="4,0"/>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                 <Button Click="ZoomClicked" Tag="out" Style="{StaticResource ToolButton}" Content="−" Width="30" AutomationProperties.Name="Zoom out"/>
                 <Button Click="ZoomClicked" Tag="fit" Style="{StaticResource ToolButton}" Content="Fit" Width="40"/>
@@ -124,14 +144,22 @@
                           PreviewMouseWheel="ViewportWheel" PanningMode="Both" PreviewMouseDown="PanStarted" PreviewMouseUp="PanEnded"
                           PreviewMouseMove="PanMoved" LostMouseCapture="PanLost">
               <Viewbox x:Name="PageView" Margin="14" Visibility="Collapsed">
-                <local:FigureCanvas x:Name="Page" Focusable="True" AutomationProperties.Name="Figure canvas"/>
+                <Grid>
+                  <local:FigureCanvas x:Name="Page" Focusable="True" AllowDrop="True" PreviewDragOver="CanvasDragOver" PreviewDrop="CanvasDrop"
+                                      AutomationProperties.Name="Figure canvas"/>
+                  <Canvas x:Name="CanvasEditors"/>
+                </Grid>
               </Viewbox>
             </ScrollViewer>
-            <Border x:Name="EmptyCanvasCard" Grid.Row="1" Grid.Column="1" IsHitTestVisible="False" HorizontalAlignment="Center" VerticalAlignment="Center"
+            <Border x:Name="EmptyCanvasCard" Grid.Row="1" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                     Margin="20" Padding="22,19" CornerRadius="7" Background="{StaticResource WorkspacePanel}" BorderBrush="{StaticResource WorkspaceLine}" BorderThickness="1">
               <StackPanel>
                 <TextBlock Text="Figure workspace" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,5"/>
                 <TextBlock x:Name="EmptyCanvas" Width="230" Text="Open a local or SSH project, or start a new one." Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap" TextAlignment="Center"/>
+                <WrapPanel HorizontalAlignment="Center" Margin="0,8,0,0">
+                  <Button x:Name="RecentButton" Click="RecentClicked" Style="{StaticResource ToolButton}" Content="Open Recent ▾"/>
+                  <Button x:Name="PythonSetupButton" Click="PythonSetupClicked" Style="{StaticResource ToolButton}" Content="Python Setup…"/>
+                </WrapPanel>
               </StackPanel>
             </Border>
           </Grid>
@@ -141,36 +169,81 @@
           <TabItem x:Name="CodeTab" Header="Code">
             <DockPanel Background="White">
               <DockPanel DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}">
-                <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="EditSourceClicked" Content="Edit source…" Margin="4,0"/>
-                <TextBlock x:Name="SourceTitle" Margin="10,0" VerticalAlignment="Center" Foreground="{StaticResource WorkspaceMuted}" Text="Figure source"/>
+                <Button x:Name="EditSourceButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="EditSourceClicked" Content="Apply" ToolTip="Apply code (Ctrl+S)"/>
+                <Button x:Name="ExternalCodeButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="ExternalCodeClicked" Content="Open in editor" ToolTip="Open the saved file in the configured external editor (Notepad by default)"/>
+                <Button x:Name="RevertCodeButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Click="RevertCodeClicked" Content="Reload file"/>
+                <TextBlock x:Name="SourceTitle" DockPanel.Dock="Right" Margin="6,0" VerticalAlignment="Center" Foreground="{StaticResource WorkspaceMuted}"/>
+                <ComboBox x:Name="SourcePicker" Margin="6,3" AutomationProperties.Name="Project source file"/>
               </DockPanel>
               <edit:TextEditor x:Name="SourceText" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Background="White"
                                Padding="6" ShowLineNumbers="True" LineNumbersForeground="{StaticResource WorkspaceMuted}"
                                HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Figure source"/>
             </DockPanel>
           </TabItem>
+          <TabItem x:Name="CaptionTab" Header="Caption">
+            <DockPanel>
+              <DockPanel DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}">
+                <Button x:Name="SaveCaptionButton" DockPanel.Dock="Right" Click="SaveCaptionClicked" Style="{StaticResource ToolButton}" Content="Apply caption"/>
+                <TextBlock Margin="10,3" VerticalAlignment="Center" Text="Not printed on the figure" Foreground="{StaticResource WorkspaceMuted}"/>
+              </DockPanel>
+              <TextBox x:Name="CaptionText" TextChanged="CaptionTextChanged" AcceptsReturn="True" TextWrapping="Wrap" BorderThickness="0" Padding="9"
+                       VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Figure caption"/>
+            </DockPanel>
+          </TabItem>
+          <TabItem x:Name="HistoryTab" Header="History">
+            <DockPanel>
+              <Button x:Name="HistoryJumpButton" DockPanel.Dock="Top" HorizontalAlignment="Right" Click="JumpHistoryClicked" Content="Go to step" Style="{StaticResource ToolButton}"/>
+              <ListBox x:Name="HistoryList" BorderThickness="0" ItemContainerStyle="{StaticResource WorkspaceRow}" SelectionChanged="HistorySelected"
+                       MouseDoubleClick="HistoryDoubleClicked" AutomationProperties.Name="Project edit history"/>
+            </DockPanel>
+          </TabItem>
           <TabItem x:Name="PreflightTab" Header="Preflight">
-            <ListBox x:Name="Warnings" BorderThickness="0" ItemContainerStyle="{StaticResource WorkspaceRow}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Preflight messages">
-              <ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate>
+            <ListBox x:Name="Warnings" BorderThickness="0" SelectionChanged="WarningSelected" ItemContainerStyle="{StaticResource WorkspaceRow}"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Preflight messages">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel ToolTip="{Binding Hint}">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding Badge}" Foreground="{Binding Tint}" FontWeight="SemiBold" Width="66"/>
+                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                  </DockPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
             </ListBox>
           </TabItem>
           <TabItem x:Name="TerminalTab" Header="Terminal">
             <DockPanel x:Name="TerminalDrawer" Background="#1B1B1E">
-              <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" Margin="0,0,0,1">
-                <TextBlock Text="Project shell" Foreground="{StaticResource WorkspaceMuted}" Margin="10,0" VerticalAlignment="Center"/>
-                <Button Content="Restart shell" Click="RestartShellClicked" Style="{StaticResource ToolButton}"/>
-              </StackPanel>
+              <DockPanel DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}" Margin="0,0,0,1">
+                <Button DockPanel.Dock="Right" Content="Restart shell" Click="RestartShellClicked" Style="{StaticResource ToolButton}"/>
+                <Button x:Name="MirrorShellButton" DockPanel.Dock="Right" Content="Local mirror shell…" Click="OpenMirrorShellClicked"
+                        ToolTip="Open the mirror in a separate local PowerShell window" Style="{StaticResource ToolButton}" Visibility="Collapsed"/>
+                <TextBlock x:Name="TerminalTitle" Text="Project shell (PowerShell)" TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource WorkspaceMuted}" Margin="10,0" VerticalAlignment="Center"/>
+              </DockPanel>
+              <DockPanel DockPanel.Dock="Top" Background="{StaticResource WorkspaceBar}">
+                <WrapPanel DockPanel.Dock="Right">
+                  <Button Content="Run…" Click="RunTerminalCommandClicked" Style="{StaticResource ToolButton}" ToolTip="Type a command into the active shell"/>
+                  <Button Content="New" Click="NewShellClicked" Style="{StaticResource ToolButton}" ToolTip="New terminal tab"/>
+                  <Button x:Name="SplitShellButton" Content="Split" Click="SplitShellClicked" Style="{StaticResource ToolButton}" IsEnabled="False" ToolTip="Split the current terminal tab"/>
+                  <Button x:Name="KillShellButton" Content="Close shell" Click="KillShellClicked" Style="{StaticResource ToolButton}" IsEnabled="False" ToolTip="Close the active shell"/>
+                </WrapPanel>
+                <ListBox x:Name="ShellTabs" SelectionChanged="ShellTabSelected" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Disabled" AutomationProperties.Name="Terminal sessions">
+                  <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+                </ListBox>
+              </DockPanel>
               <ContentControl x:Name="TerminalHost"/>
             </DockPanel>
           </TabItem>
         </TabControl>
       </Grid>
-      <GridSplitter Grid.Column="3" HorizontalAlignment="Stretch"/>
-      <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <GridSplitter x:Name="InspectorSplitter" Grid.Column="3" HorizontalAlignment="Stretch"/>
+      <ScrollViewer x:Name="InspectorPane" Grid.Column="4" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="12,12,12,8">
           <TextBlock Text="INSPECTOR" Style="{StaticResource SectionTitle}"/>
           <TextBlock x:Name="InspectorTitle" Text="Page" FontSize="19" FontWeight="SemiBold" Margin="0,4,0,1" TextTrimming="CharacterEllipsis"/>
           <TextBlock x:Name="InspectorHint" Text="Geometry and settings" Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="InspectorSource" Foreground="{StaticResource WorkspaceMuted}" TextWrapping="Wrap"/>
+          <TextBlock x:Name="InspectorError" Foreground="#AA2020" TextWrapping="Wrap"/>
           <Border Height="1" Background="{StaticResource WorkspaceLine}" Margin="0,12"/>
           <GroupBox x:Name="Geometry" Header="Geometry (mm)" BorderThickness="0" FontWeight="SemiBold" Padding="0">
             <StackPanel Margin="0,6,0,0" TextElement.FontWeight="Normal">
@@ -202,11 +275,35 @@
             </StackPanel>
           </GroupBox>
           <Border Height="1" Background="{StaticResource WorkspaceLine}" Margin="0,9"/>
+          <StackPanel x:Name="InspectorArrange" Visibility="Collapsed" Margin="0,0,0,10">
+            <TextBlock x:Name="AlignTitle" Text="ALIGN" Style="{StaticResource SectionTitle}"/>
+            <ComboBox x:Name="AlignmentTarget" Margin="0,5" SelectedIndex="0" AutomationProperties.Name="Align to">
+              <ComboBoxItem Content="Selection" Tag="selection"/>
+              <ComboBoxItem Content="First selected" Tag="key"/>
+              <ComboBoxItem Content="Figure" Tag="figure"/>
+            </ComboBox>
+            <WrapPanel x:Name="InspectorAlignTools" AutomationProperties.Name="Inspector alignment tools"/>
+            <StackPanel x:Name="InspectorDistribute">
+              <TextBlock Text="DISTRIBUTE AND SIZE" Style="{StaticResource SectionTitle}" Margin="0,7,0,3"/>
+              <WrapPanel x:Name="InspectorDistributeTools" AutomationProperties.Name="Inspector distribution and size tools"/>
+              <TextBlock Text="Fixed gap (mm)" Margin="0,5,0,3"/>
+              <WrapPanel>
+                <TextBox x:Name="FixedGap" Width="45" Style="{StaticResource WorkspaceInput}" AutomationProperties.Name="Fixed gap in millimeters"/>
+                <Button x:Name="FixedAcross" Content="Across" Click="FixedGapClicked" Tag="h" Style="{StaticResource ToolButton}" ToolTip="Set horizontal gaps"/>
+                <Button x:Name="FixedDown" Content="Down" Click="FixedGapClicked" Tag="v" Style="{StaticResource ToolButton}" ToolTip="Set vertical gaps"/>
+              </WrapPanel>
+            </StackPanel>
+          </StackPanel>
           <TextBlock x:Name="InspectorActionsTitle" Text="PROJECT STYLE" Style="{StaticResource SectionTitle}" Margin="0,1,0,7"/>
           <WrapPanel>
             <Button x:Name="InspectorFirst" Click="InspectorActionClicked" Margin="0,0,5,5"/>
             <Button x:Name="InspectorSecond" Click="InspectorActionClicked" Margin="0,0,5,5"/>
           </WrapPanel>
+          <StackPanel x:Name="PropertyEditor" Margin="0,10,0,5" Visibility="Collapsed">
+            <TextBlock Text="PROPERTIES" Style="{StaticResource SectionTitle}"/>
+            <StackPanel x:Name="PropertyFields"/>
+            <Button x:Name="ApplyPropertiesButton" Click="ApplyPropertiesClicked" Content="Apply properties" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+          </StackPanel>
         </StackPanel>
       </ScrollViewer>
     </Grid>

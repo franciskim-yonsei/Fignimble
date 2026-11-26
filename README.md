@@ -1,5 +1,7 @@
 # Fignimble
 
+**Windows preview:** [Download the Windows x64 ZIP](https://github.com/franciskim-yonsei/Fignimble/releases/tag/windows-preview-1) or see the [Windows setup and build guide](apps/windows/README.md). This fork adds a native Windows app; the preview is unsigned and is not an official upstream release. For macOS, use [upstream Fignimble](https://github.com/pachterlab/Fignimble).
+
 [![Downloads](https://img.shields.io/github/downloads/pachterlab/Fignimble/total?label=Downloads)](https://github.com/pachterlab/Fignimble/releases)
 
 Fignimble assembles multi-panel figures for publication, and conference posters, the part of Illustrator scientists actually use, with Python

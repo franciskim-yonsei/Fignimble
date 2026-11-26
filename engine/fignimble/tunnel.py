@@ -88,6 +88,17 @@ def ssh_args(host: str, script: str) -> list[str]:
                                     "-o", "Compression=yes", host, "--", "sh -c " + shlex.quote(script)])
 
 
+def terminal_argv(host: str, project: str, python: str) -> list[str]:
+    """An interactive session (not the batch SSH connection used for the engine)."""
+    remote._check_host(host)
+    script = (f'cd {shlex.quote(project)} || exit; '
+              f'export FIGNIMBLE_PYTHON={remote._quote(python)}; '
+              'case "$FIGNIMBLE_PYTHON" in /*/*) export PATH="${FIGNIMBLE_PYTHON%/*}:$PATH";; esac; '
+              'exec "${SHELL:-/bin/sh}" -l')
+    return remote._ssh() + ["-t", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30", "--", host,
+                            "sh -c " + shlex.quote(script)]
+
+
 def _map(v, a: str, b: str):
     """`v` with paths under folder `a` moved under folder `b` (in strings, lists, dict keys and values)."""
     if isinstance(v, str):
@@ -318,6 +329,9 @@ class Tunnel:
                             msg = {"id": msg["id"], "error": f"couldn't fetch the export from {self.host}"}
                     if "result" in msg:
                         msg["result"] = _map(res, self.R, self.L)
+                        if cmd == "open" and isinstance(msg["result"], dict) and res.get("project"):
+                            msg["result"].update(remotePath=self.R,
+                                                 terminalArgv=terminal_argv(self.host, self.R, self.python))
                 if cmd == "close":
                     self.open = False
                 self.emit(msg)

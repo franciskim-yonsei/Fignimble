@@ -47,9 +47,9 @@ internal sealed class FormDialog : Window
     public void Note(string text) => fields.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, 0, 0, 8) });
 
-    public void Add(string label, Control control)
+    public void Add(string label, FrameworkElement control)
     {
-        fields.Children.Add(new Label { Content = label, Target = control, Padding = new Thickness(0, 0, 0, 3) });
+        if (label.Length > 0) fields.Children.Add(new Label { Content = label, Target = control, Padding = new Thickness(0, 0, 0, 3) });
         control.Margin = new Thickness(0, 0, 0, 8);
         fields.Children.Add(control);
     }

@@ -17,32 +17,49 @@ public partial class MainWindow
         public override string ToString() => $"{Name} · {Size[0]:g} × {Size[1]:g} mm";
     }
     private sealed record PosterTemplates(PosterTemplate[] Templates);
-    private sealed record IconInfo(string Id, string Title, string License, string? Credit, string? SvgUrl)
+    private sealed record IconInfo(string Id, string Title, string? License, string? Credit, string? SvgUrl,
+        string Source = "catalog", string? SvgKey = null, string? Author = null, double? Width = null, double? Height = null)
     {
         public override string ToString() => $"{Title} — {License}";
     }
     private sealed record IconSearch(IconInfo[] Icons);
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
-    private Task PosterSettings()
+    private sealed record PosterPreset(string Key, string Name, double[] Size)
     {
-        if (currentRender is not { Poster: { } poster } render) return Task.CompletedTask;
+        public override string ToString() => $"{Name} · {Size[0]:g} × {Size[1]:g} mm";
+    }
+
+    private async Task PosterSettings()
+    {
+        if (currentRender is not { Poster: { } poster } render) return;
+        PosterPreset[] presets = [];
+        await During("Loading poster sizes…", async () =>
+        {
+            var sizes = await engine!.CallAsync<Dictionary<string, PosterPreset>>("posters");
+            presets = sizes.Select(p => p.Value with { Key = p.Key }).ToArray();
+        });
+        if (!StillEditing(render)) return;
         var dialog = new FormDialog(this, "Poster page settings");
         dialog.Note("Orientation swaps the preset dimensions. It does not rearrange the existing layout; check the canvas and preflight after changing it.");
+        var size = dialog.Choice("Size preset", presets, presets.FirstOrDefault(p => p.Key == poster.Key));
+        size.IsEnabled = size.HasItems;
         var landscape = dialog.Check("Landscape", poster.Landscape);
         var margin = dialog.Text("Minimum safe margin (mm)", FormatMm(poster.Margin));
         double gap = 0;
         if (!dialog.Confirm("Apply", () => TryMm(margin.Text, false, out gap) && gap >= 0 ? null : "Enter a non-negative margin.") ||
-            !StillEditing(render)) return Task.CompletedTask;
+            !StillEditing(render)) return;
         var props = new Dictionary<string, object?> { ["margin"] = gap };
         bool turned = landscape.IsChecked == true;
-        if (turned != poster.Landscape)
+        string key = (size.SelectedItem as PosterPreset)?.Key ?? poster.Key;
+        if (turned != poster.Landscape || key != poster.Key)
         {
+            if (key != poster.Key) props["poster"] = key;
             props["landscape"] = turned;
             props["width"] = null;
             props["height"] = null;
         }
-        return EditFigure(render.Figure, new { figure = render.Figure, op = "figure", props }, "Updating poster…");
+        await EditFigure(render.Figure, new { figure = render.Figure, op = "figure", props }, "Updating poster…");
     }
 
     private Task ChoosePlacedFigure()
@@ -78,6 +95,7 @@ public partial class MainWindow
 
     private Task CreatePoster(string name, string template) => During("Creating poster…", async () =>
     {
+        if (!ConfirmDiscardDrafts()) return;
         var result = await engine!.CallAsync<NewFigureResult>("new_figure", new { name, poster = template });
         await RefreshProject(result.Name);
     });
@@ -98,18 +116,22 @@ public partial class MainWindow
     {
         var search = new FormDialog(this, "Search BioCartoon");
         var term = search.Text("Search term", "");
+        var category = search.Text("Category (optional)", "");
+        var license = search.Text("License (optional)", "");
+        var sort = search.Choice("Sort", new[] { "relevance", "popular", "az", "za" }, "relevance");
         search.Note("Search the icon catalog and review the license and credit before inserting. First use may download the catalog.");
-        if (!search.Confirm("Search", () => string.IsNullOrWhiteSpace(term.Text) ? "Enter a search term." : null)) return;
+        if (!search.Confirm("Search", () => new[] { term.Text, category.Text, license.Text }.All(string.IsNullOrWhiteSpace)
+            ? "Enter a search term or filter." : null)) return;
         IconInfo[] icons = [];
         await During("Searching BioCartoon…", async () =>
         {
-            icons = await SearchIcons(term.Text.Trim());
+            icons = await SearchFilteredIcons(term.Text.Trim(), category.Text.Trim(), license.Text.Trim(), (string)sort.SelectedItem);
             Status.Text = icons.Length == 0 ? "No matching icons." : $"BioCartoon: {icons.Length} results.";
         });
         if (icons.Length == 0) return;
         var pick = new FormDialog(this, "Insert BioCartoon icon") { Width = 520 };
         var selected = pick.Choice("Icon", icons, icons[0]);
-        var credit = pick.Text("Attribution (copy for your caption or acknowledgments)", icons[0].Credit ?? icons[0].License, true);
+        var credit = pick.Text("Attribution (copy for your caption or acknowledgments)", CreditText(icons[0]), true);
         credit.IsReadOnly = true;
         var preview = new Button { Content = "Preview selected icon" };
         preview.Click += async (_, _) =>
@@ -136,38 +158,82 @@ public partial class MainWindow
         pick.Add("Preview", preview);
         selected.SelectionChanged += (_, _) =>
         {
-            if (selected.SelectedItem is IconInfo icon) credit.Text = icon.Credit ?? icon.License;
+            if (selected.SelectedItem is IconInfo icon) credit.Text = CreditText(icon);
         };
         if (pick.Confirm("Insert icon", () => null) && selected.SelectedItem is IconInfo chosen)
-            await InsertIcon(chosen.Id, chosen.Title, !string.IsNullOrEmpty(chosen.SvgUrl));
+            await InsertIconRecord(chosen, !string.IsNullOrEmpty(chosen.SvgUrl ?? chosen.SvgKey));
     }
 
-    private async Task<IconInfo[]> SearchIcons(string term)
+    private Task<IconInfo[]> SearchIcons(string term) => SearchFilteredIcons(term, "", "", "relevance");
+
+    private async Task<IconInfo[]> SearchFilteredIcons(string term, string category, string license, string sort)
     {
-        string json = await BioCartoon("search", "--icons", "--no-sql", "--limit", "30", "--json", "--", term);
+        var args = new List<string> { "search", "--icons", "--no-sql", "--limit", "50", "--json", "--sort", sort };
+        if (category.Length > 0) args.Add("--category=" + category);
+        if (license.Length > 0) args.Add("--license=" + license);
+        if (term.Length > 0) { args.Add("--"); args.Add(term); }
+        string json = await BioCartoon(args.ToArray());
         return JsonSerializer.Deserialize<IconSearch>(json, WebJson)?.Icons ?? [];
     }
 
-    private Task InsertIcon(string id, string title, bool svg) => !validFigure || currentRender is not { } render ? Task.CompletedTask :
+    private Task InsertIcon(string id, string title, bool svg) => InsertIconRecord(new IconInfo(id, title, null, null, null), svg);
+
+    private Task InsertIconRecord(IconInfo icon, bool svg) => !validFigure || currentRender is not { Size: [var pageW, var pageH] } render ? Task.CompletedTask :
         During("Downloading BioCartoon icon…", async () =>
         {
             var folder = Directory.CreateTempSubdirectory("fignimble-icon-");
             try
             {
-                string safeId = new(id.Where(char.IsAsciiLetterOrDigit).ToArray());
-                if (safeId.Length == 0 || safeId != id) throw new IOException("Invalid icon identifier.");
-                string path = Path.Combine(folder.FullName, $"BioCartoon-{safeId}." + (svg ? "svg" : "png"));
-                await BioCartoon("fetch", id, svg ? "--svg" : "--png", "--out", path);
-                Rect box = FindPlacement(render);
+                string safeId = new(icon.Id.Where(char.IsAsciiLetterOrDigit).ToArray());
+                if (safeId.Length == 0 || safeId != icon.Id) throw new IOException("Invalid icon identifier.");
+                string destination(bool vector) => Path.Combine(folder.FullName, $"BioCartoon-{safeId}." + (vector ? "svg" : "png"));
+                string path = destination(svg);
+                try { await BioCartoon("fetch", svg ? "--svg" : "--png", "--out", path, "--", icon.Id); }
+                catch (IOException) when (svg)
+                {
+                    path = destination(false);
+                    svg = false;
+                    await BioCartoon("fetch", "--png", "--out", path, "--", icon.Id);
+                }
+                IconAttribution.Write(path, JsonSerializer.Serialize(icon with { Source = icon.Source ?? "catalog" }, WebJson));
+                double aspect = icon.Width is > 0 and var iw && icon.Height is > 0 and var ih ? ih / iw : 1;
+                if (!svg)
+                {
+                    using var stream = File.OpenRead(path);
+                    var frame = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
+                    aspect = (double)frame.PixelHeight / frame.PixelWidth;
+                }
+                double width = Math.Min(25, Math.Min(pageW, Math.Min(25, pageH) / aspect)), height = width * aspect;
                 var result = await engine!.CallAsync<EditResult>("import_file", new { figure = render.Figure, path,
-                    x = box.X, y = box.Y, w = box.Width, label = (string?)null });
+                    x = (pageW - width) / 2, y = (pageH - height) / 2, w = width, label = (string?)null });
                 ShowRender(result.Figure);
                 Page.SelectIds(result.Select ?? []);
                 await ReadState(render.Figure);
-                Status.Text = $"Inserted {title} ({id}). Keep the catalog’s attribution with the figure.";
+                Status.Text = $"Inserted {icon.Title} ({icon.Id}). Right-click the image to copy its attribution.";
             }
             finally { folder.Delete(recursive: true); }
         });
+
+    private static string CreditText(IconInfo icon) => string.Join("\n", new[] { icon.Credit ?? icon.Author ?? icon.Title, icon.License }
+        .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    private IconInfo? SelectedIcon()
+    {
+        if (Page.Selection is not { Kind: "image", Props.Source: { } source } || project is not { } folder) return null;
+        string path = Path.Combine(folder, source);
+        try { return IconAttribution.Read(path) is { } json ? JsonSerializer.Deserialize<IconInfo>(json, WebJson) : null; }
+        catch (JsonException) { return null; }
+    }
+
+    private void ShowIconCredit(IconInfo icon)
+    {
+        var dialog = new FormDialog(this, icon.Title);
+        var credit = dialog.Text("Catalog attribution", CreditText(icon), multiline: true);
+        credit.IsReadOnly = true;
+        if (!dialog.Confirm("Copy Credit", () => null)) return;
+        try { Clipboard.SetText(credit.Text); Status.Text = "Copied BioCartoon credit."; }
+        catch (System.Runtime.InteropServices.ExternalException ex) { Status.Text = ex.Message; }
+    }
 
     private async Task<string> BioCartoon(params string[] args)
     {
@@ -220,7 +286,12 @@ public partial class MainWindow
     {
         using var stream = File.OpenRead(path);
         var decoded = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-        var rgba = new FormatConvertedBitmap(decoded.Frames[0], PixelFormats.Bgra32, null, 0);
+        return SimulateVision(decoded.Frames[0], mode);
+    }
+
+    internal static BitmapSource SimulateVision(BitmapSource image, int mode)
+    {
+        var rgba = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
         double[][] matrix = mode switch
         {
             0 => [[.367322,.860646,-.227968],[.280085,.672501,.047413],[-.011820,.042940,.968881]],
@@ -229,7 +300,9 @@ public partial class MainWindow
             _ => [[.2126,.7152,.0722],[.2126,.7152,.0722],[.2126,.7152,.0722]]
         };
         double[] lut = Enumerable.Range(0, 256).Select(n => n <= 10 ? n / 3294.6 : Math.Pow((n / 255d + .055) / 1.055, 2.4)).ToArray();
-        byte Encode(double t) { t = Math.Clamp(t, 0, 1); return (byte)Math.Round(255 * (t <= .0031308 ? t * 12.92 : 1.055 * Math.Pow(t, 1 / 2.4) - .055)); }
+        var encode = Enumerable.Range(0, 4097).Select(index => index / 4096d)
+            .Select(t => (byte)Math.Round(255 * (t <= .0031308 ? t * 12.92 : 1.055 * Math.Pow(t, 1 / 2.4) - .055))).ToArray();
+        byte Encode(double t) => encode[(int)Math.Round(Math.Clamp(t, 0, 1) * 4096)];
         int stride = rgba.PixelWidth * 4;
         byte[] pixels = new byte[stride * rgba.PixelHeight];
         rgba.CopyPixels(pixels, stride, 0);

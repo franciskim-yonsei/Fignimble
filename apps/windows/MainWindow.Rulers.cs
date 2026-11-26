@@ -29,7 +29,7 @@ public partial class MainWindow
                     ruler.Origin = ruler.Vertical ? zero.Y : zero.X;
                     ruler.Scale = ruler.Vertical ? one.Y - zero.Y : one.X - zero.X;
                     ruler.LengthMm = ruler.Vertical ? h : w;
-                    ruler.Marks = (currentRender.Guides ?? []).Select(g => ruler.Vertical ? g.Y : g.X).OfType<double>().ToArray();
+                    ruler.Marks = Page.ShowGuides ? (currentRender.Guides ?? []).Select(g => ruler.Vertical ? g.Y : g.X).OfType<double>().ToArray() : [];
                 }
                 ruler.InvalidateVisual();
             }
@@ -38,7 +38,7 @@ public partial class MainWindow
 
     private void RulerDown(object sender, MouseButtonEventArgs e)
     {
-        if (busy || !validFigure || currentRender is not { } render || sender is not FigureRuler ruler || ruler.Scale <= 0) return;
+        if (busy || !validFigure || !Page.ShowGuides || currentRender is not { } render || sender is not FigureRuler ruler || ruler.Scale <= 0) return;
         double px = ruler.Vertical ? e.GetPosition(ruler).Y : e.GetPosition(ruler).X;
         var hits = (render.Guides ?? []).Select((g, i) => (Hint: ruler.Vertical ? g.Y : g.X, Index: i))
             .Where(t => t.Hint.HasValue && Math.Abs(ruler.Origin + t.Hint.Value * ruler.Scale - px) <= 5)
@@ -74,6 +74,13 @@ public partial class MainWindow
         }
         else if (position >= 0 && position <= drag.Ruler.LengthMm)
             await ChangeGuide("guide_add", drag.Ruler.Vertical ? "y" : "x", position);
+    }
+
+    private Task MoveCanvasGuide(int index, double? position)
+    {
+        if (shownFigure is not { } figure || !validFigure) return Task.CompletedTask;
+        return EditFigure(figure, position is { } value ? new { figure, op = "guide_move", index, value } :
+            (object)new { figure, op = "guide_delete", index }, "Updating guide…");
     }
 
     private void RulerLost(object sender, MouseEventArgs e)

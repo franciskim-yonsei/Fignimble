@@ -61,6 +61,23 @@ def main():
             app["s"].restart_renderer()
         return res
 
+    def install_remote_engine_packages(a):
+        # For initial SSH setup, only permit the known engine dependencies the tunnel has diagnosed.
+        import shlex
+        import subprocess
+        from .tunnel import ssh_args
+
+        host, python = a["host"], a["python"]
+        remote._check_host(host)
+        packages = a.get("packages") or []
+        if not packages or any(p not in ("matplotlib", "pymupdf", "pillow") for p in packages):
+            raise ValueError("only missing Fignimble engine packages can be installed here")
+        script = (f"{remote._quote(python)} -m pip install --disable-pip-version-check --no-input -- "
+                  + shlex.join(packages))
+        result = subprocess.run(ssh_args(host, script), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
+        return {"ok": result.returncode == 0,
+                "output": "\n".join((result.stdout + result.stderr).strip().splitlines()[-12:])}
+
     def remote_list(a):
         try:
             return {"ok": True, **remote.list_dir(a["host"], a.get("path") or "")}
@@ -82,6 +99,7 @@ def main():
         "new_project": lambda a: templates.new_project(a["dir"], a.get("journal")),
         "requirements": requirements,
         "install": install,
+        "install_remote_engine_packages": install_remote_engine_packages,
         "state": lambda a: need().api_state(),
         "figure": lambda a: need().api_figure(a),
         "edit": lambda a: need().edit(a),
@@ -142,6 +160,8 @@ def main():
                 run(req)
             else:
                 pool.submit(run, req)
+    # Drain requests before interpreter shutdown; on Windows subprocess readers start threads.
+    pool.shutdown(wait=True)
     if app["s"]:
         app["s"].close()
     if far:

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Fignimble.Windows;
 
@@ -21,6 +22,7 @@ internal sealed class EngineClient : IDisposable
     public string Python { get; }
     public string EngineRoot { get; }
     public RemoteProject? Remote { get; }
+    public RemotePackageNeeds? MissingRemotePackages { get; private set; }
 
     public EngineClient(string python, RemoteProject? remote = null)
     {
@@ -73,7 +75,7 @@ internal sealed class EngineClient : IDisposable
         return candidates.FirstOrDefault(File.Exists) ?? "python.exe";
     }
 
-    private static string FindEngine()
+    internal static string FindEngine()
     {
         string? explicitPath = Environment.GetEnvironmentVariable("FIGNIMBLE_ENGINE");
         if (!string.IsNullOrWhiteSpace(explicitPath))
@@ -99,7 +101,10 @@ internal sealed class EngineClient : IDisposable
                 using var document = JsonDocument.Parse(line);
                 JsonElement reply = document.RootElement;
                 if (reply.TryGetProperty("event", out var kind) && kind.GetString() is { } notification)
+                {
+                    if (notification == "needs_packages") MissingRemotePackages = reply.Deserialize<RemotePackageNeeds>(Json);
                     Notification?.Invoke(notification);
+                }
                 else if (reply.TryGetProperty("id", out var id) && id.TryGetInt32(out int i) &&
                          requests.TryRemove(i, out var request))
                 {
@@ -116,6 +121,7 @@ internal sealed class EngineClient : IDisposable
         finally
         {
             foreach (var request in requests.Values) request.TrySetException(failure ?? Stopped());
+            if (Remote is not null) Notification?.Invoke("disconnected");
         }
     }
 
@@ -148,12 +154,13 @@ internal sealed class EngineClient : IDisposable
                 await process.StandardInput.FlushAsync();
             }
             finally { sendGate.Release(); }
-            int timeout = Remote is not null || command is "export" or "export_table" ? 620 : 200;
+            int timeout = command is "install" or "install_remote_engine_packages" ? 1850 : Remote is not null || command is "export" or "export_table" ? 620 : 200;
             JsonElement result = await request.Task.WaitAsync(TimeSpan.FromSeconds(timeout));
             if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("ok", out var ok) &&
                 ok.ValueKind == JsonValueKind.False)
                 throw new InvalidOperationException(result.TryGetProperty("error", out var error)
-                    ? error.GetString() : "The engine refused the operation.");
+                    ? error.GetString() : result.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.String
+                        ? output.GetString() : "The engine refused the operation.");
             return result.Deserialize<T>(Json) ?? throw new InvalidOperationException("Empty engine reply.");
         }
         finally { requests.TryRemove(id, out _); }
@@ -174,6 +181,7 @@ internal sealed class EngineClient : IDisposable
 }
 
 internal sealed record RemoteProject(string Host, string Path, string Python, string Mirror);
+internal sealed record RemotePackageNeeds(string[] Missing, string[] Pip);
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo, string[]? History, string[]? Future,
     string[]? Panels);
 internal sealed record FigureEntry(string Name, string? Thumb, string? Error, int Warnings);
@@ -184,31 +192,36 @@ internal sealed record RenderPoster(string Key, bool Landscape, double? Margin);
 internal sealed record FigureStyle(Dictionary<string, JsonElement> Props);
 internal sealed record FigureGuide(double? X, double? Y);
 internal sealed record FigureCaption(string? Text);
-internal sealed record FigureWarning(string Level, string Message);
+internal sealed record FigureWarning(string Level, string Message, string? Oid);
 internal sealed record FigureElement(string Oid, string? Kind, double[]? Box, Sprite? Sprite, string? Parent,
     string? Host, ElementProperties? Props, string? Method, string? Panel, string? Text, string? Group,
-    SourceLocation? Code, PanelText[]? Texts, LayoutDivider[]? Dividers);
+    SourceLocation? Code, PanelText[]? Texts, LayoutDivider[]? Dividers, SourceLocation? Site, string? Error, TableGrid? Grid, bool Detached, string? Inner, Dictionary<string, JsonElement>? Item, PanelMark[]? Marks);
+internal sealed record TableGrid(double[][] Rows, double[][] Cols);
 internal sealed record LayoutDivider(string Axis, double At, double From, double To, bool Editable);
-internal sealed record SourceLocation(string? File);
-internal sealed record PanelText(string Key, string Text, double[]? Box)
+internal sealed record SourceLocation(string? File, int? Line);
+internal sealed record PanelMark(string Key, string Color, double[]? Box);
+internal sealed record PanelText(string Key, string Text, double[]? Box, double Size, string? Color, bool Bold, bool Italic)
 {
     public override string ToString() => $"{Key}: {Text}";
 }
 internal sealed record ElementProperties(bool Locked, bool Hidden, string? Name, string? Source, string? Text,
     JsonElement Label, double? X1, double? Y1, double? X2, double? Y2, double? Rotation, double[]? Crop, JsonElement[][]? Cells,
-    JsonElement Data, double? Size, double? Width, double? Height)
+    JsonElement Data, double? Size, double? Width, double? Height, double? H, string? Align)
 {
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extra { get; init; }
     public string? LabelText => Label.ValueKind == JsonValueKind.String ? Label.GetString() : null;
     public string? DataText => Data.ValueKind == JsonValueKind.String ? Data.GetString() : null;
 }
 internal sealed record RenderJournal(string Key);
-internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths);
-internal sealed record JournalChoice(string Key, string Name, Dictionary<string, double>? Widths = null)
+internal sealed record JournalPreset(string Name, Dictionary<string, double> Widths, Dictionary<string, int>? Dpi, Dictionary<string, JsonElement>? Labels);
+internal sealed record JournalChoice(string Key, string Name, Dictionary<string, double>? Widths = null, Dictionary<string, int>? Dpi = null, Dictionary<string, JsonElement>? Labels = null)
 {
     public override string ToString() => Name;
 }
 internal sealed record Sprite(string File, double X, double Y, double W, double H);
-internal sealed record EditResult(FigureRender Figure, string[]? Select, bool Unchanged);
+internal sealed record EditResult(FigureRender Figure, string[]? Select, bool Unchanged, string? File);
 internal sealed record NewProjectResult(string Project, string Figure);
 internal sealed record NewFigureResult(string Name);
-internal sealed record ExportResult(string[]? Warnings);
+internal sealed record ExportResult(string[]? Warnings, ExportResolution? Resolution);
+internal sealed record ExportResolution(int? Dpi, string[]? Notes);

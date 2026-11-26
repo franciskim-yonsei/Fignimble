@@ -12,8 +12,10 @@ namespace Fignimble.Windows;
 
 public partial class MainWindow
 {
-    private bool editingSource;
-    private (string Project, string[] Code)? copiedLayers;
+    private const string LayerClipboardFormat = "Fignimble.EditableLayers";
+    private static (string Project, string[] Code, string Token)? copiedLayers;
+    private Dictionary<string, JsonElement>? copiedStyle;
+    private static readonly string[] StyleKeys = ["color", "stroke", "fill", "width", "dash", "opacity", "size", "weight", "style", "font", "tip", "head", "radius", "arrow"];
     private sealed record CopiedCode(string[] Code);
     private sealed record SourceFile(string Path, string Name)
     {
@@ -42,16 +44,16 @@ public partial class MainWindow
         dark.Click += async (_, _) => await SetDarkPreview(dark.IsChecked);
         menu.Items.Add(dark);
         Add("Color-vision preview…", ChooseVision, validFigure);
-        Add("Edit caption…", EditCaption, validFigure);
+        Add("Caption", () => { ShowCaption(); return Task.CompletedTask; }, validFigure);
         Add("Plot style…", () => EditStyle(false), validFigure);
         Add("Panel lettering style…", () => EditStyle(true), validFigure);
-        Add("Edit history…", ChooseHistory, state?.CanUndo == true || state?.CanRedo == true);
+        Add("History", ShowHistory, state is not null);
         menu.Items.Add(new Separator());
         Add("Add vertical guide…", () => ChooseGuide("x"), validFigure);
         Add("Add horizontal guide…", () => ChooseGuide("y"), validFigure);
         Add("Clear guides", () => ChangeGuide("guide_clear", "x", 0), validFigure && currentRender?.Guides is { Length: > 0 });
         var snap = new MenuItem { Header = "Smart snapping", IsCheckable = true, IsChecked = Page.SnapEnabled };
-        snap.Click += (_, _) => Page.SnapEnabled = snap.IsChecked;
+        snap.Click += (_, _) => UpdateViewAid(() => Page.SnapEnabled = snap.IsChecked);
         menu.Items.Add(snap);
         menu.Items.Add(new Separator());
         var layer = Page.Selection;
@@ -72,43 +74,22 @@ public partial class MainWindow
         menu.IsOpen = true;
     }
 
-    private async void EditSourceClicked(object sender, RoutedEventArgs e) => await EditSource();
-
-    private async Task EditSource()
+    private Task EditSource()
     {
-        if (project is not { } folder || currentRender is not { } render) return;
-        string Normalize(string text) => text.Replace("\r\n", "\n");
-        var paths = new[] { render.File, Path.Combine(folder, "style.py") }
-            .Concat((state?.Panels ?? []).Select(p => Path.Combine(folder, p)))
-            .Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase);
-        var files = paths.Select(p => new SourceFile(p, Path.GetRelativePath(folder, p))).ToArray();
-        if (files.Length == 0) return;
-        try
+        if (currentRender is not { } render) return Task.CompletedTask;
+        var el = Page.Selection;
+        SourceLocation? location = el?.Kind is "panel" or "inset" or "figure" or "text" ? el.Code ?? el.Site : el?.Site;
+        var path = location?.File;
+        if (path is null || !File.Exists(path)) path = render.File;
+        ShowDrawer(CodeTab);
+        if (OpenCodeFile(path))
         {
-            var picker = new FormDialog(this, "Edit project source");
-            var file = picker.Choice("Python file", files,
-                files.FirstOrDefault(f => f.Path.Equals(Page.Selection?.Code?.File, StringComparison.OrdinalIgnoreCase)) ?? files[0]);
-            if (!picker.Confirm("Open editor", () => file.SelectedItem is null ? "Choose a Python file." : null)) return;
-            var selected = (SourceFile)file.SelectedItem;
-            string original = Normalize(File.ReadAllText(selected.Path));
-            var editor = new FormDialog(this, selected.Name) { Width = 820, ResizeMode = ResizeMode.CanResize };
-            editor.Note("Apply saves the file as one undo step. A change made on disk since opening this editor won’t be overwritten.");
-            var draft = editor.Text("Python source", original, multiline: true);
-            draft.FontFamily = new FontFamily("Consolas");
-            draft.Height = Math.Min(450, SystemParameters.WorkArea.Height * 0.55);
-            draft.TextWrapping = TextWrapping.NoWrap;
-            draft.AcceptsTab = true;
-            draft.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
-            draft.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            editingSource = true;
-            if (editor.ConfirmAsync("Apply", async () =>
-                {
-                    await ApplySource(selected.Path, original, Normalize(draft.Text));
-                    return null;
-                })) await Reload();
+            int line = Math.Clamp(location?.Line ?? 1, 1, SourceText.Document.LineCount);
+            SourceText.TextArea.Caret.Line = line;
+            SourceText.ScrollToLine(line);
+            SourceText.Focus();
         }
-        catch (Exception ex) { Status.Text = ex.Message; }
-        finally { editingSource = false; }
+        return Task.CompletedTask;
     }
 
     private async Task ApplySource(string file, string original, string draft)
@@ -116,33 +97,8 @@ public partial class MainWindow
         await engine!.CallAsync<JsonElement>("write_source", new { file, expected = original, text = draft, check_syntax = true });
     }
 
-    private async Task EditCaption()
-    {
-        if (!validFigure || currentRender is not { } render) return;
-        string original = render.Caption?.Text ?? "";
-        var dialog = new FormDialog(this, "Figure caption") { Width = 560 };
-        dialog.Note("Saved in the figure’s Python source. The caption isn’t printed on the figure.");
-        var text = dialog.Text("Caption", original, multiline: true);
-        text.Height = 135;
-        if (dialog.Confirm("Apply", () => null))
-            await ApplyCaption(render.Figure, original, text.Text.Replace("\r\n", "\n"));
-    }
-
     private Task ApplyCaption(string figure, string original, string text) => EditFigure(figure,
         new { figure, op = "caption", expected = original, text }, "Saving caption…");
-
-    private Task ChooseHistory()
-    {
-        if (state is not { } s) return Task.CompletedTask;
-        string[] previous = s.History ?? [], next = s.Future ?? [];
-        var steps = previous.Prepend("Project opened").Concat(next)
-            .Select((label, index) => new HistoryStep(index, label, index == previous.Length)).Reverse().ToArray();
-        var dialog = new FormDialog(this, "Project edit history");
-        dialog.Note("Jump to a step across this project. History is cleared when you close or switch projects.");
-        var step = dialog.Choice("Step", steps, steps.Single(x => x.Current));
-        return dialog.Confirm("Go to step", () => step.SelectedItem is null ? "Choose a step." : null) &&
-               step.SelectedItem is HistoryStep target && !target.Current ? JumpHistory(target.Index) : Task.CompletedTask;
-    }
 
     private Task JumpHistory(int n) => During("Moving through edit history…", async () =>
     {
@@ -170,8 +126,8 @@ public partial class MainWindow
 
     private Task ChooseTableExport()
     {
-        if (!validFigure || shownFigure is not { } figure || Page.Selection is not { Kind: "table" } table) return Task.CompletedTask;
-        var dialog = new SaveFileDialog { Title = "Export selected table",
+        if (!validFigure || shownFigure is not { } figure || TableToExport is not { } table) return Task.CompletedTask;
+        var dialog = new SaveFileDialog { Title = "Export table",
             Filter = "Word table (*.docx)|*.docx|Excel sheet (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv",
             FileName = figure + "-table", InitialDirectory = project };
         return dialog.ShowDialog(this) == true ? ExportTable(figure, table.Oid, dialog.FileName) : Task.CompletedTask;
@@ -211,15 +167,59 @@ public partial class MainWindow
             finally { folder.Delete(recursive: true); }
         });
 
-    private bool CanPasteLayers() => copiedLayers is { } copy && string.Equals(project, copy.Project, StringComparison.OrdinalIgnoreCase);
+    private bool CanPasteLayers()
+    {
+        if (copiedLayers is not { } copy || !string.Equals(project, copy.Project, StringComparison.OrdinalIgnoreCase)) return false;
+        try { return Clipboard.GetData(LayerClipboardFormat) is string token && token == copy.Token; }
+        catch (System.Runtime.InteropServices.ExternalException) { return false; }
+    }
 
-    private Task CopyLayers() => !validFigure || project is not { } folder || shownFigure is not { } figure ||
-        Page.SelectedIds.Count == 0 ? Task.CompletedTask : During("Copying selected layers…", async () =>
+    private Task CopyLayers() => CopyOrCutLayers(false);
+    private Task CutLayers() => CopyOrCutLayers(true);
+
+    private Task CopyOrCutLayers(bool cut) => !validFigure || (cut && !CanEditLayers("delete")) ||
+        project is not { } folder || shownFigure is not { } figure ||
+        Page.SelectedIds.Count == 0 ? Task.CompletedTask : During(cut ? "Cutting selected layers…" : "Copying selected layers…", async () =>
         {
-            var result = await engine!.CallAsync<CopiedCode>("copy", new { figure, oids = Page.SelectedIds });
-            copiedLayers = (folder, result.Code);
-            Status.Text = "Copied editable layers. Paste them into any figure of this project from More or with Ctrl+V.";
+            var oids = Page.SelectedIds.ToArray();
+            var result = await engine!.CallAsync<CopiedCode>("copy", new { figure, oids });
+            if (result.Code.Length == 0 || cut && result.Code.Length != oids.Length)
+            { Status.Text = "Some selected layers could not be copied as editable code."; return; }
+            // The system clipboard only holds a marker. It cannot inject code into a project.
+            string token = Guid.NewGuid().ToString("N");
+            var clipboard = new DataObject();
+            clipboard.SetData(LayerClipboardFormat, token);
+            Clipboard.SetDataObject(clipboard);
+            copiedLayers = (folder, result.Code, token);
+            if (cut)
+            {
+                var deleted = await engine.CallAsync<EditResult>("edit", new { figure, op = "delete", oids });
+                Page.Select(null);
+                ShowRender(deleted.Figure);
+                await ReadState(figure);
+            }
+            Status.Text = $"{(cut ? "Cut" : "Copied")} editable layers. Use Ctrl+V in a figure of this project.";
         });
+
+    private Task CopyFromCanvas() => Page.SelectedIds.Count > 0 ? CopyLayers() : CopyFigureImage();
+
+    private Task PasteIntoCanvas() => CanPasteLayers() ? PasteLayers() : PasteFigureImage();
+
+    private void CopyLayerStyle()
+    {
+        var el = Page.Selections.FirstOrDefault(e => e.Oid == Page.SelectedIds.FirstOrDefault());
+        if (el?.Props is not { } props) return;
+        copiedStyle = (props.Extra ?? []).Where(field => StyleKeys.Contains(field.Key) && field.Value.ValueKind != JsonValueKind.Null)
+            .ToDictionary(field => field.Key, field => field.Value);
+        if (props.Size is { } size) copiedStyle["size"] = JsonSerializer.SerializeToElement(size);
+        if (props.Width is { } width && el.Kind != "text") copiedStyle["width"] = JsonSerializer.SerializeToElement(width);
+        Status.Text = "Copied layer style.";
+    }
+
+    private bool CanPasteStyle => !busy && validFigure && copiedStyle is { Count: > 0 } && Page.SelectedIds.Count > 0 && Page.Selections.All(FigureCanvas.Movable);
+    private Task PasteLayerStyle() => CanPasteStyle && shownFigure is { } figure
+        ? EditFigure(figure, new { figure, op = "paste_style", oids = Page.SelectedIds, props = copiedStyle }, "Pasting layer style…")
+        : Task.CompletedTask;
 
     private Task PasteLayers() => !validFigure || shownFigure is not { } figure || !CanPasteLayers() ? Task.CompletedTask :
         During("Pasting editable layers…", async () =>
@@ -277,7 +277,7 @@ public partial class MainWindow
         }
         if (messages.Count > 0)
         {
-            Warnings.ItemsSource = messages;
+            ShowExportMessages(messages);
             ShowDrawer(PreflightTab);
         }
         Status.Text = $"Exported {exported} of {figures.Length} figures to {folder}." +

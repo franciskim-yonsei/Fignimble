@@ -81,7 +81,7 @@ def install(requirements: list[str], timeout: float = 900) -> dict:
     """pip install `requirements` into this Python: {ok, output (its last lines)}."""
     if not requirements:
         return {"ok": True, "output": ""}
-    cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", *requirements]
+    cmd = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--", *requirements]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if r.returncode and "No module named pip" in r.stderr:     # a Python without pip: give it one, once

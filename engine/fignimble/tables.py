@@ -16,7 +16,12 @@ from xml.sax.saxutils import escape
 def read_rows(source: str | Path) -> list[list[str]]:
     """The rows of a .csv, .tsv or .txt file (the delimiter is guessed)."""
     text = Path(source).read_text(encoding="utf-8-sig", errors="replace")
-    if Path(source).suffix.lower() == ".tsv":
+    return parse_delimited(text, Path(source).suffix)[0]
+
+
+def parse_delimited(text: str, suffix: str) -> tuple[list[list[str]], str]:
+    """Use the same row and delimiter interpretation for rendering and inline editing."""
+    if suffix.lower() == ".tsv":
         delim = "\t"
     else:
         try:
@@ -24,7 +29,7 @@ def read_rows(source: str | Path) -> list[list[str]]:
         except csv.Error:
             delim = ","
     # rows of empty cells stay (a table still to be filled in); only blank lines go
-    return [r for r in csv.reader(io.StringIO(text), delimiter=delim) if r]
+    return [r for r in csv.reader(io.StringIO(text), delimiter=delim) if r], delim
 
 
 def write_delimited(rows: list, delimiter: str = ",") -> str:
