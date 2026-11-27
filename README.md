@@ -1,6 +1,6 @@
 # Fignimble
 
-**Windows preview.** This fork publishes an unsigned Windows x64 installer and portable ZIP. [Download Windows preview 4](https://github.com/franciskim-yonsei/Fignimble/releases/tag/windows-preview-4) · [Windows setup and build guide](apps/windows/README.md)
+**Windows preview.** This fork publishes an unsigned Windows x64 installer and portable ZIP. [Download Windows preview 5](https://github.com/franciskim-yonsei/Fignimble/releases/tag/windows-preview-5) · [Windows setup and build guide](apps/windows/README.md)
 
 For macOS, use [upstream Fignimble](https://github.com/pachterlab/Fignimble).
 
