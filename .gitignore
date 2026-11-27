@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 apps/macos/.build/
 apps/macos/Fignimble.app/
+tests/windows_ssh/bin/
+tests/windows_ssh/obj/
 *.egg-info/
 *.zip
 .DS_Store

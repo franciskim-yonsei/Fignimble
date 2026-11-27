@@ -1,8 +1,7 @@
 """Panels from an SSH server: list a folder there and fetch a panel's code into the project.
 
-ssh runs here without asking anything (BatchMode). The app logs in first (SSHLogin.swift), showing what ssh asks
-(a password, a code) in a dialog, and leaves a shared connection open in FIGNIMBLE_SSH_SHARE that these commands
-use; without it the server must take your key or an ssh-agent's. Hosts come from ~/.ssh/config.
+The apps can log in first and supply a shared connection. Otherwise ssh uses BatchMode and the server
+must accept a key or an SSH agent. Hosts come from ~/.ssh/config.
 FIGNIMBLE_SSH replaces the command (the tests use a stand-in).
 """
 
@@ -34,8 +33,10 @@ def _ssh():
     return ["ssh"]
 
 
-def ssh_command() -> list[str]:
+def ssh_command(host: str | None = None) -> list[str]:
     """ssh and its options, through the app's shared connection to the server when there is one."""
+    if host and host == os.environ.get("FIGNIMBLE_SSH_SESSION_HOST") and os.environ.get("FIGNIMBLE_SSH_PIPE"):
+        return [sys.executable, "-u", "-m", "fignimble.ssh_pipe"] + OPTIONS
     share = os.environ.get("FIGNIMBLE_SSH_SHARE")
     opts = ["-o", f"ControlPath={share}/%C", "-o", "ControlMaster=auto", "-o", "ControlPersist=4h"] if share else []
     return _ssh() + OPTIONS + opts
@@ -105,7 +106,7 @@ def list_dir(host: str, path: str = "") -> dict:
     `path` is empty)."""
     _check_host(host)
     script = f"cd {_quote(path) if path else '~'} && pwd && ls -1Ap"
-    out = _run(ssh_command() + [host, "--", script]).decode(errors="replace").splitlines()
+    out = _run(ssh_command(host) + [host, "--", script]).decode(errors="replace").splitlines()
     if not out:
         raise RemoteError("no answer from the server")
     entries = []
@@ -121,7 +122,7 @@ def list_dir(host: str, path: str = "") -> dict:
 def fetch(host: str, path: str, dest: Path) -> Path:
     """Copy `path` on `host` to the local file `dest`."""
     _check_host(host)
-    data = _run(ssh_command() + [host, "--", f"cat -- {_quote(path)}"], timeout=120)
+    data = _run(ssh_command(host) + [host, "--", f"cat -- {_quote(path)}"], timeout=120)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     return dest

@@ -2,6 +2,12 @@
 
 A native WPF client for the existing Fignimble Python engine. Create or open local projects, assemble a figure from plots, images, and tables, and export PDF, SVG, PNG, or TIFF. The Code drawer edits the Python code behind the figure. Canvas edits write to the real project files, and figure and panel scripts run as Python, so open only trusted projects and try existing work on a copy first.
 
+## Install from a Windows release
+
+Download and run **Fignimble-Windows-x64-Setup.exe** from the [Windows releases](https://github.com/franciskim-yonsei/Fignimble/releases). Setup installs for your Windows account and adds **Fignimble** to the Start menu. Run a newer installer to update. The installer bundles .NET and uses the Python 3.10 or newer installed on your PC. Use **File → Python Setup** to select it. The embedded terminal also needs the Microsoft Edge WebView2 Runtime.
+
+To distribute the app through a shared drive, upload the installer and have each colleague download and run it. The portable ZIP is also available for colleagues who prefer to extract and run the app themselves. Each PC uses its own Python and app settings. SSH projects remain on the server.
+
 ## Install or update from the repository root
 
 Requires .NET 10 SDK and Python 3.10 or newer. The embedded terminal also uses the Microsoft Edge WebView2 Runtime already installed on most Windows systems.
@@ -18,7 +24,7 @@ This builds a Release copy at `%LOCALAPPDATA%\Fignimble\app`, sets up a reusable
 powershell -NoProfile -ExecutionPolicy Bypass -File .\apps\windows\package.ps1
 ```
 
-The unsigned ZIP bundles the Windows .NET runtime. Extract it before running `Fignimble.exe`. Use **File → Python Setup** to point at an existing Python environment or run the included `setup-python.ps1` to create the app's private environment. Nothing is published or signed by the script.
+The unsigned ZIP bundles the Windows .NET runtime. Extract it before running `Fignimble.exe`. Use **File → Python Setup** to point at an existing Python environment or run the included `setup-python.ps1` to create the app's private environment. With Inno Setup 6 installed, pass `-InstallerOutput .\Fignimble-Windows-x64-Setup.exe` to also build an installer.
 
 ## Run from the source tree in PowerShell
 
@@ -66,9 +72,11 @@ The left sidebar has figure thumbnails and layers; the right inspector shows pag
 - **View** includes the figure’s dark version and live color-vision simulations; these simulations do not recolor exports. The BioCartoon browser offers category/license filters, sort, preview and insertion. Attribution travels with inserted PNG/SVG assets; right-click the image to see or copy it. The browser does not submit artwork to the shared catalog.
 - **Export** includes JPEG and EPS as well as CMYK, outlined text, PDF bleed, and crop marks where supported. EPS and CMYK/outlined PDF require [Ghostscript](https://ghostscript.com/releases/gsdnld.html) on the rendering machine. Install it in the usual Windows location, add `gswin64c.exe` to `PATH`, or set `FIGNIMBLE_GHOSTSCRIPT` to its full path. Check your print shop’s requirements, especially color profiles.
 
-## SSH projects (key/agent authentication)
+## SSH projects
 
-Use **SSH → Test login in an SSH console** to check the host and verify its key. The background project connection needs a key or SSH agent usable without prompts. It respects the native Windows OpenSSH configuration; use an SSH alias for custom ports or jump hosts. **SSH → Open remote project** takes the host, project directory, and the Python on the Linux server. Missing engine packages are reported before opening the project; the app can install them only when you explicitly approve installing into that server environment. On connection, Fignimble installs its own engine files under the remote user’s cache, mirrors editable files under `%LOCALAPPDATA%\Fignimble\remote`, and renders on Linux. The **Terminal** tab opens an independent interactive SSH shell in the server project directory. It sets `FIGNIMBLE_PYTHON` to the selected server interpreter and adds its directory to the initial `PATH` for absolute paths. SSH or directory errors appear in that terminal; it does not fall back to PowerShell. **Local mirror shell…** explicitly opens the mirror in a separate PowerShell window. The same SSH menu imports existing remote panel scripts and refreshes their source; their data dependencies are not copied. Back up the remote project before using this experimental workflow.
+**SSH → Open remote project** takes the host, project directory, and the Python on the Linux server. Select **Sign in with password or verification code** for direct SSH hosts that require interactive authentication. Verify the server fingerprint when prompted. Folder browsing, project operations, and terminal tabs reuse that connection while it stays open. Fignimble remembers the host fingerprint for each Windows user. Passwords and verification codes are used only for sign-in. Use **SSH → Reconnect** if the session expires. The default uses Windows OpenSSH for key and agent authentication, including configured jump hosts. **SSH → Test login in an SSH console** is available for troubleshooting.
+
+Fignimble runs the renderer in the selected server Python. It installs its engine files under the remote user's cache and mirrors editable files under `%LOCALAPPDATA%\Fignimble\remote`. Missing engine packages can be installed with your approval. The **Terminal** tab opens the server project directory and sets `FIGNIMBLE_PYTHON` to the server interpreter. **Local mirror shell…** opens the Windows mirror in PowerShell. The SSH menu can also import and refresh remote panel scripts. Back up the remote project before using this experimental workflow.
 
 Windows does not reuse password/OTP sessions from the login console for background commands. Remote names must be Windows-compatible and not collide when case is ignored. The Windows tunnel and terminal launch have fixture coverage. Verify shell startup and interpreter selection on your server before relying on them.
 

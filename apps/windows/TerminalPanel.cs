@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -6,6 +7,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using Renci.SshNet;
+using Renci.SshNet.Common;
 
 // Adapted from Pachter Lab's Manimble (BSD-2-Clause); see the repository LICENSE.
 namespace Fignimble.Windows;
@@ -19,6 +22,10 @@ public sealed class TerminalPanel : Border, IDisposable
     short cols = 100, rows = 24;
     string? cwd, python, engineRoot, cliPath;
     string[]? sshArgv;
+    InteractiveSshSession? sshSession;
+    string? sshCommand;
+    ShellStream? sshShell;
+    bool startingSsh;
     internal static string PowerShellExe => Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
     bool initializing, disposed;
     int generation;
@@ -27,7 +34,7 @@ public sealed class TerminalPanel : Border, IDisposable
     readonly object pendingGate = new();
     System.Windows.Threading.DispatcherTimer? flush;
 
-    public bool IsRunning => pty != null;
+    public bool IsRunning => pty != null || sshShell != null || startingSsh;
 
     public TerminalPanel()
     {
@@ -84,6 +91,15 @@ public sealed class TerminalPanel : Border, IDisposable
         if (ready) Spawn();
     }
 
+    internal void StartRemote(string workDir, InteractiveSshSession session, string command)
+    {
+        Stop();
+        cwd = workDir;
+        sshSession = session;
+        sshCommand = command;
+        if (ready) Spawn();
+    }
+
     // CreateProcessW takes a command line, not argv. Use the Windows CRT rules, not shell escaping.
     internal static string QuoteArgument(string arg) => "\"" + Regex.Replace(arg, "(\\\\*)(\"|\\z)", m =>
         new string('\\', m.Groups[1].Length * 2 + (m.Groups[2].Length > 0 ? 1 : 0)) + m.Groups[2].Value) + "\"";
@@ -91,6 +107,11 @@ public sealed class TerminalPanel : Border, IDisposable
     void Spawn()
     {
         if (cwd == null || !Directory.Exists(cwd)) return;
+        if (sshSession is { } session)
+        {
+            _ = SpawnSsh(session, sshCommand!);
+            return;
+        }
         var env = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
             .ToDictionary(e => (string)e.Key, e => (string?)e.Value ?? "", StringComparer.OrdinalIgnoreCase);
         env["TERM"] = "xterm-256color";
@@ -132,11 +153,50 @@ public sealed class TerminalPanel : Border, IDisposable
         }
     }
 
+    async Task SpawnSsh(InteractiveSshSession session, string command)
+    {
+        int thisRun = generation;
+        (uint columns, uint lines) = ((uint)cols, (uint)rows);
+        startingSsh = true;
+        ShellStream? shell = null;
+        try
+        {
+            shell = await Task.Run(() => session.OpenShell(columns, lines, command));
+            if (generation != thisRun) return;
+            startingSsh = false;
+            sshShell = shell;
+            if (columns != cols || lines != rows) ResizeSsh();
+            await Task.Run(() =>
+            {
+                using var reader = new StreamReader(shell, Encoding.UTF8, false, 4096, leaveOpen: true);
+                char[] buffer = new char[4096];
+                int read;
+                while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+                    OnOutput(thisRun, new string(buffer, 0, read));
+            });
+            OnOutput(thisRun, "\r\n[Shell exited. Use Restart shell to open another.]\r\n");
+        }
+        catch (Exception e)
+        {
+            OnOutput(thisRun, "\r\n[SSH shell: " + e.Message + "]\r\n");
+        }
+        finally
+        {
+            if (generation == thisRun) { startingSsh = false; sshShell = null; }
+            if (shell is not null) await Task.Run(shell.Dispose);
+        }
+    }
+
     public void Stop()
     {
         Interlocked.Increment(ref generation);
         cwd = python = engineRoot = cliPath = null;
         sshArgv = null;
+        sshSession = null;
+        sshCommand = null;
+        startingSsh = false;
+        if (sshShell is { } remoteShell) _ = Task.Run(remoteShell.Dispose);
+        sshShell = null;
         var p = pty;
         pty = null;
         if (p is not null) { p.RequestStop(); _ = Task.Run(p.Dispose); }
@@ -151,7 +211,21 @@ public sealed class TerminalPanel : Border, IDisposable
     }
 
     /// Types `text` into the shell (as if pasted), e.g. a command to start an agent.
-    public void Type(string text) => pty?.Write(text);
+    public void Type(string text)
+    {
+        if (pty is { } local) local.Write(text);
+        else
+        {
+            try { sshShell?.Write(text); }
+            catch (Exception e) when (e is IOException or ObjectDisposedException or SshException) { }
+        }
+    }
+
+    void ResizeSsh()
+    {
+        try { sshShell?.ChangeWindowSize((uint)cols, (uint)rows, 0, 0); }
+        catch (Exception e) when (e is IOException or ObjectDisposedException or SshException) { }
+    }
 
     // output arrives in many small pieces: batch it so the page gets a few messages a second, not thousands
     void OnOutput(int thisRun, string s)
@@ -193,15 +267,16 @@ public sealed class TerminalPanel : Border, IDisposable
                 ready = true;
                 cols = (short)Math.Clamp(m.GetProperty("cols").GetInt32(), 10, 1000);
                 rows = (short)Math.Clamp(m.GetProperty("rows").GetInt32(), 3, 500);
-                if (pty == null && cwd != null) Spawn();
+                if (!IsRunning && cwd != null) Spawn();
                 break;
             case "in":
-                pty?.Write(m.GetProperty("data").GetString() ?? "");
+                Type(m.GetProperty("data").GetString() ?? "");
                 break;
             case "resize":
                 cols = (short)Math.Clamp(m.GetProperty("cols").GetInt32(), 10, 1000);
                 rows = (short)Math.Clamp(m.GetProperty("rows").GetInt32(), 3, 500);
                 pty?.Resize(cols, rows);
+                ResizeSsh();
                 break;
             case "copy":
                 try { Clipboard.SetText(m.GetProperty("data").GetString() ?? ""); } catch { }

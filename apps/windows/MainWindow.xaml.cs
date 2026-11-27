@@ -61,6 +61,7 @@ public partial class MainWindow : Window
         SaveViewPreferences();
         StopProjectShells();
         engine?.Dispose();
+        foreach (var session in sshSessions.Values) session.Dispose();
         base.OnClosed(e);
     }
 
@@ -71,13 +72,13 @@ public partial class MainWindow : Window
         return SwitchEngine(python, null);
     }
 
-    private EngineClient SwitchEngine(string python, RemoteProject? remote)
+    private EngineClient SwitchEngine(string python, RemoteProject? remote, InteractiveSshSession? ssh = null)
     {
         engine?.Dispose();
         engine = null;
         previewTimer.Stop();
         Page.ClearSpriteCache();
-        var client = new EngineClient(python, remote);
+        var client = new EngineClient(python, remote, ssh);
         client.Notification += kind =>
         {
             if (kind is not ("changed" or "rendered" or "disconnected")) return;

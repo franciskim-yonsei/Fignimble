@@ -11,7 +11,7 @@ namespace Fignimble.Windows;
 public partial class MainWindow
 {
     private sealed record SshHosts(string[] Hosts);
-    private sealed record SshListing(string Path, SshEntry[] Entries);
+    private sealed record SshListing(bool Ok, string Path, SshEntry[] Entries, string? Error);
     private sealed record SshEntry(string Name, bool Dir)
     {
         public override string ToString() => Dir ? Name + "/" : Name;
@@ -33,7 +33,7 @@ public partial class MainWindow
         Add("Import Python panel from server…", ChooseRemotePanel, validFigure);
         Add("Refresh imported remote panel", RefreshRemotePanel, CanRefreshRemotePanel);
         if (engine?.Remote is { } remote)
-            Add($"Reconnect to {remote.Host}", () => OpenRemote(remote.Host, remote.Path, remote.Python, shownFigure));
+            Add($"Reconnect to {remote.Host}", () => OpenRemote(remote.Host, remote.Path, remote.Python, shownFigure, remote.Interactive));
         menu.IsOpen = true;
     }
 
@@ -57,7 +57,7 @@ public partial class MainWindow
     {
         var aliases = await RemoteHosts();
         var dialog = new FormDialog(this, "Test an SSH login");
-        dialog.Note("The separate OpenSSH console handles interactive prompts and host-key verification. The app’s project connection separately requires a key or agent; it does not remember credentials entered here.");
+        dialog.Note("This opens a separate OpenSSH session for troubleshooting. To reuse a password or verification-code sign-in in Fignimble, choose that option when opening the project.");
         var input = dialog.Text("Host alias or user@host", engine?.Remote?.Host ?? aliases.FirstOrDefault() ?? "");
         if (!dialog.Confirm("Open SSH console", () => !ValidHost(input.Text.Trim()) ? "Enter a valid SSH host or alias." : null)) return;
         try
@@ -75,11 +75,12 @@ public partial class MainWindow
     {
         var aliases = await RemoteHosts();
         var dialog = new FormDialog(this, "Open project over SSH");
-        dialog.Note("Use a trusted Linux host where SSH key or agent login is already configured (test ssh in a terminal first). The selected Python must have the Fignimble engine dependencies. Changes are mirrored back to the server.");
+        dialog.Note("Use a trusted Linux host with Python. Choose interactive sign-in if the host asks for a password or verification code. Changes are mirrored back to the server.");
         string startHost = engine?.Remote?.Host ?? aliases.FirstOrDefault() ?? "";
         var host = SshHostField(dialog, aliases, startHost);
         var path = dialog.Text("Remote project directory", "~/");
         var python = dialog.Text("Python on the server", RememberedPython(startHost));
+        var interactive = dialog.Check("Sign in with password or verification code", RememberedInteractive(startHost));
         string previousHost = startHost;
         string suggestedPython = python.Text;
         host.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) =>
@@ -87,6 +88,7 @@ public partial class MainWindow
             string current = host.Text.Trim();
             if (current == previousHost) return;
             if (python.Text.Trim() == suggestedPython) python.Text = RememberedPython(current);
+            interactive.IsChecked = RememberedInteractive(current);
             suggestedPython = RememberedPython(current);
             previousHost = current;
         }));
@@ -99,7 +101,7 @@ public partial class MainWindow
             browse.IsEnabled = false;
             try
             {
-                if (await ChooseRemotePath(dialog, target, path.Text.Trim(), folders: true) is { } selected)
+                if (await ChooseRemotePath(dialog, target, path.Text.Trim(), folders: true, interactive: interactive.IsChecked == true) is { } selected)
                     path.Text = selected;
             }
             catch (Exception ex) { if (dialog.IsVisible) MessageBox.Show(dialog, ex.Message, "Could not list server directory"); }
@@ -107,22 +109,23 @@ public partial class MainWindow
         };
         if (dialog.Confirm("Connect", () => !ValidHost(host.Text.Trim()) ? "Enter a valid SSH host or alias." :
             string.IsNullOrWhiteSpace(path.Text) || string.IsNullOrWhiteSpace(python.Text) ? "Enter a project directory and Python." : null))
-            await OpenRemote(host.Text.Trim(), path.Text.Trim(), python.Text.Trim());
+            await OpenRemote(host.Text.Trim(), path.Text.Trim(), python.Text.Trim(), interactive: interactive.IsChecked == true);
     }
 
-    private async Task OpenRemote(string host, string path, string python, string? preferred = null)
+    private async Task OpenRemote(string host, string path, string python, string? preferred = null, bool interactive = false)
     {
         if (busy || !ConfirmDiscardDrafts()) return;
         RemotePackageNeeds? needs = null;
         Task Connect() => During("Connecting over SSH…", async () =>
         {
             if (!ValidHost(host)) throw new ArgumentException("Invalid SSH host.");
+            var ssh = interactive ? await SignIn(this, host) : null;
             string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(host + "\n" + path)))[..24].ToLowerInvariant();
             string mirror = Path.Combine(settingsDirectory, "remote", hash);
             Directory.CreateDirectory(mirror);
             ResetProject();
-            var remote = new RemoteProject(host, path, python, mirror);
-            var client = SwitchEngine(ProjectPython(null), remote);
+            var remote = new RemoteProject(host, path, python, mirror, interactive);
+            var client = SwitchEngine(ProjectPython(null), remote, ssh);
             try
             {
                 remoteOpen = await client.CallAsync<RemoteOpenResult>("open", new
@@ -148,8 +151,10 @@ public partial class MainWindow
         bool installed = false;
         await During("Installing packages on the SSH server…", async () =>
         {
-            using var helper = new EngineClient(ProjectPython(null));
-            await helper.CallAsync<PackageInstall>("install_remote_engine_packages", new { host, python, packages });
+            var ssh = interactive ? await SignIn(this, host) : null;
+            using var helper = new EngineClient(ProjectPython(null), ssh: ssh);
+            var result = await helper.CallAsync<PackageInstall>("install_remote_engine_packages", new { host, python, packages });
+            if (!result.Ok) throw new InvalidOperationException(result.Output);
             installed = true;
         });
         if (installed) await Connect();
@@ -166,13 +171,16 @@ public partial class MainWindow
         string target = host.Text.Trim();
         try
         {
-            if (await ChooseRemotePath(this, target, directory.Text.Trim(), folders: false) is { } path && shownFigure == figure)
+            if (await ChooseRemotePath(this, target, directory.Text.Trim(), folders: false,
+                interactive: engine?.Remote is { Interactive: true } remote && remote.Host == target) is { } path && shownFigure == figure)
                 await ImportRemotePanel(target, path);
         }
         catch (Exception ex) { Status.Text = ex.Message; }
     }
 
     private string RememberedPython(string host) => recentProjects.FirstOrDefault(r => r.Host == host)?.Python ?? "python3";
+    private bool RememberedInteractive(string host) => engine?.Remote is { } remote && remote.Host == host
+        ? remote.Interactive : recentProjects.FirstOrDefault(r => r.Host == host)?.Interactive == true;
 
     private static ComboBox SshHostField(FormDialog dialog, string[] aliases, string preferred)
     {
@@ -181,16 +189,26 @@ public partial class MainWindow
         return host;
     }
 
-    private async Task<SshListing> ListRemotePath(string host, string path)
+    private async Task<SshListing> ListRemotePath(string host, string path, InteractiveSshSession? ssh)
     {
-        using var temporary = engine is { Running: true } ? null : new EngineClient(ProjectPython(null));
-        return await (temporary ?? engine!).CallAsync<SshListing>("remote_list", new { host, path });
+        bool useCurrent = engine is { Running: true } &&
+            (ssh is null ? engine.Remote?.Interactive != true || engine.Remote.Host != host
+                : engine.Remote is { Interactive: true } remote && remote.Host == host && engine.Ssh == ssh);
+        using var temporary = useCurrent ? null : new EngineClient(ProjectPython(null), ssh: ssh);
+        var listing = await (temporary ?? engine!).CallAsync<SshListing>("remote_list", new { host, path });
+        if (!listing.Ok) throw new InvalidOperationException(listing.Error ?? "Could not list the SSH directory.");
+        return listing;
     }
 
-    private async Task<string?> ChooseRemotePath(Window owner, string host, string path, bool folders)
+    private async Task<string?> ChooseRemotePath(Window owner, string host, string path, bool folders, bool interactive = false)
     {
         SshListing? listing = null;
-        await During("Listing server directory…", async () => { listing = await ListRemotePath(host, path); });
+        InteractiveSshSession? ssh = null;
+        await During("Listing server directory…", async () =>
+        {
+            if (interactive) ssh = await SignIn(owner, host);
+            listing = await ListRemotePath(host, path, ssh);
+        });
         if (listing is null || !owner.IsVisible) return null;
         var dialog = new FormDialog(owner, folders ? "Browse for an SSH project" : "Browse for a remote Python panel") { Width = 520 };
         dialog.Note(folders ? "Open a folder to navigate. Use This Folder selects the current server directory."
@@ -217,7 +235,7 @@ public partial class MainWindow
             if (loading) return;
             loading = true;
             entries.IsEnabled = buttons.IsEnabled = location.IsEnabled = false;
-            try { UpdateListing(await ListRemotePath(host, next)); }
+            try { UpdateListing(await ListRemotePath(host, next, ssh)); }
             catch (Exception ex) { if (dialog.IsVisible) MessageBox.Show(dialog, ex.Message, "Could not list server directory"); }
             finally { loading = false; entries.IsEnabled = buttons.IsEnabled = location.IsEnabled = true; }
         }

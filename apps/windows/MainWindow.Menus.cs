@@ -9,7 +9,7 @@ namespace Fignimble.Windows;
 
 public partial class MainWindow
 {
-    private sealed record RecentProject(string Path, string? Host, string? Python, string? Figure)
+    private sealed record RecentProject(string Path, string? Host, string? Python, string? Figure, bool Interactive = false)
     {
         public string Label => Host is null ? Path : $"{Host}:{Path}";
     }
@@ -21,7 +21,7 @@ public partial class MainWindow
     {
         if (project is not { } folder) return;
         var remote = engine?.Remote;
-        var entry = new RecentProject(remote?.Path ?? folder, remote?.Host, remote?.Python, figure);
+        var entry = new RecentProject(remote?.Path ?? folder, remote?.Host, remote?.Python, figure, remote?.Interactive == true);
         recentProjects.RemoveAll(r => r.Host == entry.Host && string.Equals(r.Path, entry.Path,
             entry.Host is null ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
         recentProjects.Insert(0, entry);
@@ -48,7 +48,7 @@ public partial class MainWindow
     }
 
     private Task OpenRecent(RecentProject recent) => recent.Host is { } host
-        ? OpenRemote(host, recent.Path, recent.Python ?? "python3", recent.Figure)
+        ? OpenRemote(host, recent.Path, recent.Python ?? "python3", recent.Figure, recent.Interactive)
         : During("Opening recent project…", async () =>
         {
             if (ConfirmDiscardDrafts()) await OpenProjectCore(recent.Path, recent.Figure);

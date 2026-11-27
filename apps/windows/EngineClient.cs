@@ -22,13 +22,15 @@ internal sealed class EngineClient : IDisposable
     public string Python { get; }
     public string EngineRoot { get; }
     public RemoteProject? Remote { get; }
+    internal InteractiveSshSession? Ssh { get; }
     public RemotePackageNeeds? MissingRemotePackages { get; private set; }
 
-    public EngineClient(string python, RemoteProject? remote = null)
+    public EngineClient(string python, RemoteProject? remote = null, InteractiveSshSession? ssh = null)
     {
         string root = EngineRoot = FindEngine();
         Python = python;
         Remote = remote;
+        Ssh = ssh;
         var utf8 = new UTF8Encoding(false);
         var start = new ProcessStartInfo(python)
         {
@@ -46,6 +48,13 @@ internal sealed class EngineClient : IDisposable
         start.Environment.Remove("FIGNIMBLE_PYTHON");
         start.Environment["PYTHONUTF8"] = "1";
         start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
+        start.Environment.Remove("FIGNIMBLE_SSH_SESSION_HOST");
+        start.Environment.Remove("FIGNIMBLE_SSH_PIPE");
+        if (ssh is not null)
+        {
+            start.Environment["FIGNIMBLE_SSH_SESSION_HOST"] = ssh.Host;
+            start.Environment["FIGNIMBLE_SSH_PIPE"] = ssh.PipeName;
+        }
         process = Process.Start(start) ?? throw new InvalidOperationException("Could not launch Python.");
         process.ErrorDataReceived += (_, e) =>
         {
@@ -181,7 +190,7 @@ internal sealed class EngineClient : IDisposable
     }
 }
 
-internal sealed record RemoteProject(string Host, string Path, string Python, string Mirror);
+internal sealed record RemoteProject(string Host, string Path, string Python, string Mirror, bool Interactive = false);
 internal sealed record RemotePackageNeeds(string[] Missing, string[] Pip);
 internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool CanRedo, string[]? History, string[]? Future,
     string[]? Panels);

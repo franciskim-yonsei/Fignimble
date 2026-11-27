@@ -1,11 +1,11 @@
-# Set up the private Python environment for an unpacked Fignimble ZIP.
+# Set up the private Python environment for a packaged Fignimble app.
 [CmdletBinding()]
 param([string]$Python = '')
 
 $ErrorActionPreference = 'Stop'
 $requirements = Join-Path $PSScriptRoot 'engine\requirements.txt'
 if (!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Fignimble.exe')) -or !(Test-Path -LiteralPath $requirements)) {
-    throw 'Extract the complete Fignimble ZIP before running this script.'
+    throw 'Run this script from the installed app folder or the fully extracted Fignimble ZIP.'
 }
 $venv = Join-Path $env:LOCALAPPDATA 'Fignimble\python'
 $interpreter = Join-Path $venv 'Scripts\python.exe'

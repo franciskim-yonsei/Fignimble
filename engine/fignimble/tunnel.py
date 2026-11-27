@@ -84,7 +84,7 @@ def engine_tarball() -> bytes:
 
 def ssh_args(host: str, script: str) -> list[str]:
     """ssh running a POSIX shell script on `host` (whatever the login shell there is)."""
-    return (remote.ssh_command() + ["-T", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
+    return (remote.ssh_command(host) + ["-T", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4",
                                     "-o", "Compression=yes", host, "--", "sh -c " + shlex.quote(script)])
 
 
@@ -228,6 +228,8 @@ class Tunnel:
                                   f"{' '.join(pip)}), or choose the Python of an environment that has the engine's "
                                   "packages (matplotlib, pymupdf and pillow).")
             if code == 255:
+                if self.host == os.environ.get("FIGNIMBLE_SSH_SESSION_HOST"):
+                    raise TunnelError(f"The shared SSH connection to {self.host} stopped. Sign in again.")
                 raise TunnelError(f"SSH couldn’t connect to {self.host}. Try the connection in your terminal and use an SSH key or agent.")
             raise TunnelError(f"the engine on {self.host} didn't start (exit status {code}); its messages are above")
         raise TunnelError("the engine didn't start")
@@ -514,7 +516,7 @@ class Tunnel:
                     host, path = where
                 try:
                     remote._check_host(host)
-                    data = remote._run(remote.ssh_command() + [host, "--", f"cat -- {remote._quote(path)}"],
+                    data = remote._run(remote.ssh_command(host) + [host, "--", f"cat -- {remote._quote(path)}"],
                                        timeout=120)
                 except remote.RemoteError as exc:
                     self.emit({"id": mid, "result": {"ok": False, "error": f"couldn't fetch {host}:{path}: {exc}"}})

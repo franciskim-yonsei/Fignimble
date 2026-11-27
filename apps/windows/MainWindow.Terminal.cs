@@ -194,6 +194,11 @@ public partial class MainWindow
     private bool CanStartProjectShell()
     {
         if (project is null || engine is null) return false;
+        if (engine.Remote is { Interactive: true } remote && SignedIn(remote.Host) != engine.Ssh)
+        {
+            Status.Text = "Use SSH → Reconnect to sign in again before opening a shell.";
+            return false;
+        }
         if (engine.Remote is null || remoteOpen?.TerminalArgv is { Length: > 0 }) return true;
         Status.Text = "SSH shell information is missing. Reconnect to the SSH project and try again.";
         return false;
@@ -210,6 +215,7 @@ public partial class MainWindow
     {
         if (!CanStartProjectShell()) return;
         if (engine!.Remote is null) panel.Start(project!, engine.Python, engine.EngineRoot, System.IO.Path.Combine(settingsDirectory, "bin"));
+        else if (engine.Ssh is { } ssh) panel.StartRemote(project!, ssh, remoteOpen!.TerminalArgv![^1]);
         else panel.StartRemote(project!, remoteOpen!.TerminalArgv!);
         panel.FocusTerminal();
     }
