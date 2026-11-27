@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     private FigureRender? currentRender;
     private bool validFigure;
     private bool busy;
+    private bool navigatingFigures, restoringFigure;
 
     public MainWindow(string? initialPath) : this(initialPath,
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Fignimble")) { }
@@ -58,7 +59,9 @@ public partial class MainWindow : Window
         SaveWindowFrame();
         SaveViewPreferences();
         StopProjectShells();
-        engine?.Dispose();
+        var client = engine;
+        engine = null;
+        client?.Dispose();
         foreach (var session in sshSessions.Values) session.Dispose();
         base.OnClosed(e);
     }
@@ -98,17 +101,18 @@ public partial class MainWindow : Window
         return engine = client;
     }
 
-    private async Task During(string status, Func<Task> action)
+    private async Task During(string status, Func<Task> action, bool figureNavigation = false)
     {
         if (busy) return;
         busy = true;
+        navigatingFigures = figureNavigation;
         UpdateControls();
         Status.Text = status;
         try { await action(); }
         catch (Exception ex) { Status.Text = ex.Message; }
         finally
         {
-            busy = false;
+            busy = navigatingFigures = false;
             if (reloadTimer.IsEnabled) { reloadTimer.Stop(); reloadTimer.Start(); }
             UpdateControls();
         }
@@ -117,7 +121,7 @@ public partial class MainWindow : Window
     private void UpdateControls()
     {
         NewProjectButton.IsEnabled = OpenButton.IsEnabled = RemoteButton.IsEnabled = !busy;
-        Figures.IsEnabled = !busy && Figures.HasItems;
+        Figures.IsEnabled = (!busy || navigatingFigures) && Figures.HasItems;
         NewFigureButton.IsEnabled = ReloadButton.IsEnabled = !busy && project is not null;
         ImportButton.IsEnabled = SampleButton.IsEnabled = !busy && validFigure;
         Geometry.IsEnabled = PropertyEditor.IsEnabled = !busy && validFigure;
@@ -222,37 +226,60 @@ public partial class MainWindow : Window
 
     private async void FigureChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (busy || restoringFigure || Figures.SelectedItem is not FigureCard card || card.Name == shownFigure) return;
-        if (!ConfirmDiscardDrafts())
+        if (e.Source != Figures || restoringFigure || Figures.SelectedItem is not FigureCard card) return;
+        if (navigatingFigures)
         {
-            restoringFigure = true;
-            try { Figures.SelectedItem = figureCards.FirstOrDefault(f => f.Name == shownFigure); }
-            finally { restoringFigure = false; }
+            Status.Text = $"Opening {card.Name}…";
             return;
         }
-        await During($"Opening {card.Name}…", () => RenderFigure(card.Name));
+        if (busy || engine is null || card.Name == shownFigure) return;
+        if (!ConfirmDiscardDrafts())
+        {
+            RestoreFigureSelection();
+            return;
+        }
+        await During($"Opening {card.Name}…", async () =>
+        {
+            // One render at a time. Pick up only the last selection made while it was running.
+            while (engine is not null && Figures.SelectedItem is FigureCard selected)
+            {
+                await RenderFigure(selected.Name, selection: selected);
+                if (Figures.SelectedItem == selected) break;
+            }
+        }, figureNavigation: true);
     }
 
-    private async Task RenderFigure(string name, bool external = false, bool force = false, bool? dark = null)
+    private void RestoreFigureSelection()
     {
+        restoringFigure = true;
+        try { Figures.SelectedItem = figureCards.FirstOrDefault(f => f.Name == shownFigure); }
+        finally { restoringFigure = false; }
+    }
+
+    private async Task RenderFigure(string name, bool external = false, bool force = false, bool? dark = null,
+        FigureCard? selection = null)
+    {
+        var client = engine!;
+        bool Obsolete() => engine != client || selection is not null && Figures.SelectedItem != selection;
         bool switching = name != shownFigure;
         double density = switching || !validFigure
             ? figureCards.FirstOrDefault(card => card.Name == name)?.PreviewDensity ?? InitialPreviewDensity
             : force ? PreviewDensityForView() : CurrentPreviewDensity;
         try
         {
-            var render = await engine!.CallAsync<FigureRender>("figure", new { name, dark = dark ?? darkPreview, force }, density);
+            var render = await client.CallAsync<FigureRender>("figure", new { name, dark = dark ?? darkPreview, force }, density);
+            if (Obsolete()) return;
             if (dark is { } value) darkPreview = value;
             if (force) Page.ClearSpriteCache();
             ShowRender(render, external);
         }
+        catch when (Obsolete()) { }
         catch
         {
             if (switching && shownFigure != name)
             {
-                var previous = figureCards.FirstOrDefault(card => card.Name == shownFigure);
-                Figures.SelectedItem = previous;
-                if (previous is null) ClearFigure();
+                RestoreFigureSelection();
+                if (Figures.SelectedItem is null) ClearFigure();
             }
             throw;
         }

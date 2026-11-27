@@ -45,6 +45,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not install the test SSH server.' }
           python tests/windows_ssh/smoke.py
 
+      - name: Test switching figures during a slow render
+        shell: pwsh
+        run: dotnet run --project tests/windows_navigation -- (Get-Command python).Source
+
       - name: Build the Windows installer and portable ZIP
         shell: pwsh
         run: |

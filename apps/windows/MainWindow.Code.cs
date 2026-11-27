@@ -11,7 +11,7 @@ public partial class MainWindow
 {
     private string? codePath, codeFigurePath;
     private string codeOriginal = "", renderedSource = "";
-    private bool syncingCode, restoringFigure, closeAfterApply;
+    private bool syncingCode, closeAfterApply;
     private static string NormalizeSource(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
     private bool CodeDirty => codePath is not null && NormalizeSource(SourceText.Text) != codeOriginal;
 
