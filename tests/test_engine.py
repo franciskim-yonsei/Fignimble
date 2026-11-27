@@ -976,6 +976,31 @@ def test_panel_math_in_the_style_font(tmp_path):
     assert not any("DejaVu" in f for f in fonts), fonts
 
 
+def _piece(tmp_path, text, **kw):
+    """(pdf, w mm, h mm) of a text element drawn in DejaVu Sans, always at hand where matplotlib is."""
+    from fignimble.render import Renderer
+    a = dict(size=10, weight="normal", style="normal", color="#000000", rotation=0, family=["DejaVu Sans"])
+    return Renderer(str(tmp_path)).text_piece(text, **{**a, **kw})
+
+
+def test_markup_italic_slants_digits(tmp_path):
+    import pymupdf
+    pdf, _, _ = _piece(tmp_path, "*Gli1*")
+    spans = [s for b in pymupdf.open(pdf)[0].get_text("dict")["blocks"] for l in b["lines"] for s in l["spans"]]
+    assert spans and all("Oblique" in s["font"] for s in spans), [(s["text"], s["font"]) for s in spans]
+    pdf, _, _ = _piece(tmp_path, r"*Gli1* and $\mathcal{L}$")          # the text's own \mathcal keeps its meaning
+    assert pdf
+
+
+def test_markup_operators_are_not_spaced(tmp_path):
+    from fignimble.render import _as_mathtext, _runs
+    assert r"Cre/{+}" in _as_mathtext(_runs("Slc26a9^{Cre/+}"), False)
+    _, plus, _ = _piece(tmp_path, "**Cre/+**")
+    _, slash, _ = _piece(tmp_path, "**Cre/**")
+    _, alone, _ = _piece(tmp_path, "**+**")
+    assert plus - slash < alone * 1.15, (plus, slash, alone)           # no space around the +
+
+
 def test_rectangle_carries_a_letter(tmp_path):
     r = _render(tmp_path, 'fig = Figure(width=120, height=40)\n'
                           'fig.panel("p.py", x=0, y=0, w=35, h=35)\n'

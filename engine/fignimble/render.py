@@ -51,7 +51,7 @@ CROP_SLUG = 10.0                   # mm outside the bleed for crop marks
 VECTOR = (".pdf", ".svg")
 
 
-CACHE_VERSION = 9                  # bump when a change to drawing makes cached pieces wrong
+CACHE_VERSION = 13                 # bump when a change to drawing makes cached pieces wrong
 MAX_SPRITE_PX = 24e6               # pixels of the editor's picture of one piece, at most
 MAX_SPRITE_SIDE = 12000
 
@@ -462,14 +462,16 @@ class Renderer:
         key = _h("text", text, size, weight, style, color, rotation, family, align, width, opacity)
         out = self.cache / "pieces" / f"{key}.pdf"
         if not out.exists():
-            rc = {"pdf.fonttype": 42, "font.family": "sans-serif", "font.sans-serif": family, **_math_rc(family)}
+            italic, italic_rc = _italic(family, text)
+            rc = {"pdf.fonttype": 42, "font.family": "sans-serif", "font.sans-serif": family, **_math_rc(family),
+                  **italic_rc}
             with matplotlib.rc_context(rc):
                 fig = MplFigure(figsize=(2, 2))
                 FigureCanvasAgg(fig)                     # to measure lines while wrapping
-                shown = _rich(text, weight == "bold", width, fig, dict(fontsize=size, fontweight=weight,
-                                                                       fontstyle=style))
-                fig.text(0, 0, shown, fontsize=size, fontweight=weight, fontstyle=style, color=color,
-                         rotation=rotation, multialignment=align, rotation_mode="anchor", alpha=opacity)
+                props = dict(fontsize=size, fontweight=weight, fontstyle=style)
+                shown = _rich(text, weight == "bold", width, fig, props, italic)
+                fig.text(0, 0, shown, **props, color=color, rotation=rotation, multialignment=align,
+                         rotation_mode="anchor", alpha=opacity)
                 buf = io.BytesIO()
                 fig.savefig(buf, format="pdf", bbox_inches="tight", pad_inches=0, transparent=True)
             tmp = out.with_suffix(".tmp")
@@ -490,7 +492,9 @@ class Renderer:
         out = self.cache / "pieces" / f"{key}.pdf"
         meta = out.with_suffix(".json")
         if not (out.exists() and meta.exists()):
-            rc = {"pdf.fonttype": 42, "font.family": "sans-serif", "font.sans-serif": family, **_math_rc(family)}
+            italic, italic_rc = _italic(family, text)
+            rc = {"pdf.fonttype": 42, "font.family": "sans-serif", "font.sans-serif": family, **_math_rc(family),
+                  **italic_rc}
             with matplotlib.rc_context(rc):
                 fig = MplFigure(figsize=(max(width, 1) / 25.4, 2))
                 FigureCanvasAgg(fig)
@@ -498,7 +502,7 @@ class Renderer:
                 props = dict(fontsize=size, fontweight=weight, fontstyle=style)
 
                 def lay(s_):
-                    return _flow(blocks, s_, weight == "bold", width, fig, {**props, "fontsize": s_})
+                    return _flow(blocks, s_, weight == "bold", width, fig, {**props, "fontsize": s_}, italic)
 
                 def tall(lines) -> float:                   # mm
                     return (lines[-1]["y"] + lines[-1]["size"] * 0.25) / MM if lines else 0.0
@@ -2354,15 +2358,33 @@ def _runs(text: str) -> list:
 
 
 def _mt(s: str) -> str:
-    """Text written inside mathtext."""
+    """Text written inside mathtext, spaced as the words around it are: math spaces binary operators (+, *), relations
+    (=, <, >, :) and punctuation, so "Cre/+" would read "Cre/ +" and "3:1" "3 : 1". In braces an operator is spaced
+    as a letter, in its run's font; relations and punctuation other than the comma need \\text (upright, regular)."""
     s = s.replace("\\", r"\backslash ")
     for ch in "{}_^$%#&":
         s = s.replace(ch, "\\" + ch)
-    # a hyphen, not math's spaced minus sign ("multi-panel" in bold)
-    return s.replace(" ", r"\ ").replace("-", r"\text{-}")
+    out = []
+    for ch in s:
+        if ch in "+*−,":
+            out.append("{" + ch + "}")
+        elif ch in "-=<>:;.!~'":                     # "-": a hyphen, not math's minus sign ("multi-panel" in bold)
+            out.append(r"\text{" + ch + "}")
+        else:
+            out.append(ch)
+    return "".join(out).replace(" ", r"\ ")
 
 
-def _as_mathtext(runs, bold_base: bool) -> str:
+def _italic(family, text: str) -> tuple[str, dict]:
+    """The mathtext command for *italic* runs, and the rc it needs. matplotlib before 3.11 sets digits upright in
+    \\mathit (Gli*1*, Gdf*6*), so italic runs are set in the \\mathcal slot, given the italic face, which slants every
+    character; unless the text's own math uses \\mathcal, which then keeps its meaning (and \\mathit is used)."""
+    if r"\mathcal" in text:
+        return r"\mathit", {}
+    return r"\mathcal", {"mathtext.cal": _math_rc(family)["mathtext.it"]}
+
+
+def _as_mathtext(runs, bold_base: bool, italic: str = r"\mathit") -> str:
     rm = r"\mathbf" if bold_base else r"\mathrm"
     out = []
     for t, kind in runs:
@@ -2373,7 +2395,7 @@ def _as_mathtext(runs, bold_base: bool) -> str:
         elif kind == "bold":
             out.append(rf"$\mathbf{{{_mt(t)}}}$")
         elif kind == "italic":
-            out.append(rf"$\mathit{{{_mt(t)}}}$" if not bold_base else rf"$\mathbfit{{{_mt(t)}}}$"
+            out.append(rf"${italic}{{{_mt(t)}}}$" if not bold_base else rf"$\mathbfit{{{_mt(t)}}}$"
                        if "mathtext.bfit" in matplotlib.rcParams else rf"$\mathit{{{_mt(t)}}}$")
         elif kind == "sup":
             out.append(rf"$^{{{rm}{{{_mt(t)}}}}}$")
@@ -2382,16 +2404,16 @@ def _as_mathtext(runs, bold_base: bool) -> str:
     return "".join(out)
 
 
-def _rich(text: str, bold_base: bool, width, fig, props) -> str:
+def _rich(text: str, bold_base: bool, width, fig, props, italic: str = r"\mathit") -> str:
     """The string matplotlib draws for a text with markup, its lines wrapped at `width` mm."""
     runs = _runs(text)
     plain = all(k in ("plain", "math") for _, k in runs)
     if not width:
-        return text if plain else _as_mathtext(runs, bold_base)
+        return text if plain else _as_mathtext(runs, bold_base, italic)
     r = fig.canvas.get_renderer()
 
     def measure(line_runs) -> float:
-        t = fig.text(0, 0, _as_mathtext(line_runs, bold_base), **props)
+        t = fig.text(0, 0, _as_mathtext(line_runs, bold_base, italic), **props)
         w = t.get_window_extent(r).width / fig.dpi * 25.4
         t.remove()
         return w
@@ -2422,7 +2444,7 @@ def _rich(text: str, bold_base: bool, width, fig, props) -> str:
             else:
                 line = trial
         lines.append(line)
-    return "\n".join(_as_mathtext(l, bold_base) for l in lines)
+    return "\n".join(_as_mathtext(l, bold_base, italic) for l in lines)
 
 
 _BULLET = re.compile(r"^( *)([-•]) +(.*)$")
@@ -2503,7 +2525,7 @@ GAP = 0.6                         # a paragraph's space, in lines
 ITEM_GAP = 0.2                    # between list items, in lines
 
 
-def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props) -> list[dict]:
+def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props, italic: str = r"\mathit") -> list[dict]:
     """Lay blocks out in a box `width_mm` wide: lines [{text (mathtext), size, bold, x (mm), y (baseline, pt from
     the top), marker, mx}], and the height (pt) as the last entry's "end"."""
     r = fig.canvas.get_renderer()
@@ -2512,7 +2534,7 @@ def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props) -> list[
     def measure(runs, s, b) -> float:
         key = (tuple(runs), s, b)
         if key not in cache:
-            t = fig.text(0, 0, _as_mathtext(runs, b), **{**props, "fontsize": s,
+            t = fig.text(0, 0, _as_mathtext(runs, b, italic), **{**props, "fontsize": s,
                                                           "fontweight": "bold" if b else props["fontweight"]})
             cache[key] = t.get_window_extent(r).width / fig.dpi * 25.4
             t.remove()
@@ -2539,7 +2561,7 @@ def _flow(blocks, size: float, bold: bool, width_mm: float, fig, props) -> list[
         lines = _wrap(_words(b["text"]), max(width_mm - indent - hang, 1.0), lambda rr: measure(rr, s, bb))
         for k, ln in enumerate(lines):
             y += s * 1.0 if (k or out) else s * 0.8          # down to this line's baseline
-            out.append({"text": _as_mathtext(ln, bb), "size": s, "bold": bb, "x": indent + hang, "y": y,
+            out.append({"text": _as_mathtext(ln, bb, italic), "size": s, "bold": bb, "x": indent + hang, "y": y,
                         "marker": b.get("marker") if k == 0 else None, "mx": indent, "item": b["kind"] == "item"})
             y += s * (LINE_PITCH - 1.0)
         first = False
