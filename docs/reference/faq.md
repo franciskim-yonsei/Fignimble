@@ -7,6 +7,14 @@ Choose **Set Up Python**: it downloads Python 3.11 with what Fignimble needs int
 `python3` that has matplotlib, PyMuPDF (below version 2), Pillow and NumPy. If the setup fails, check the internet
 connection; its error says which step failed.
 
+## Fignimble says "That Python can't run Fignimble"
+
+The Python you chose has the packages but couldn't run Fignimble's engine: often it is `ipython`, a pyenv shim or
+a wrapper script rather than a `python3` itself. Fignimble forgets that choice and asks again: choose **Set Up
+Python**, or **Choose a Python…** and pick the environment's `bin/python3`. To clear a saved choice by hand, quit
+Fignimble and run `defaults delete org.pachterlab.Fignimble python` (deleting the preferences file isn't enough,
+since macOS keeps preferences cached).
+
 ## A panel shows an error instead of a plot
 
 The panel's code raised an exception. The preflight list (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>P</kbd>) shows the error and

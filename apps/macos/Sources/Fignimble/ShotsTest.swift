@@ -26,6 +26,44 @@ extension MainController {
         }
     }
 
+    /// An engine that stops at once (issue #8): what the window shows, and whether its alert's first button
+    /// closes it: FIGNIMBLE_SHOTS_SCENE=enginestop, into enginestop.txt.
+    func engineStopReport(_ dir: String) async {
+        var s = ""
+        func note() {
+            s += "sheet \(window.attachedSheet.map { "\(type(of: $0)) visible \($0.isVisible)" } ?? "none")"
+            s += " modal \(NSApp.modalWindow.map { "\(type(of: $0))" } ?? "none")"
+            s += " windows \(NSApp.windows.filter(\.isVisible).map { "\(type(of: $0)) \($0.title)" })\n"
+        }
+        // the choice of a Python, offered again, runs modally, and tasks wait while it shows: a timer that fires then
+        let modalCheck = Timer(timeInterval: 4, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let modal = NSApp.modalWindow else { return }
+                let views = modal.contentView.map { self.allSubviews($0) } ?? []
+                let texts = views.compactMap { ($0 as? NSTextField)?.stringValue }.filter { !$0.isEmpty }
+                var r = "modal text \(texts.map { String($0.prefix(160)) })\n"
+                r += "modal buttons \(views.compactMap { ($0 as? NSButton)?.title })\n"
+                r += "saved python \(UserDefaults.standard.string(forKey: "python") ?? "none")\n"
+                try? r.write(toFile: dir + "/enginestop.txt", atomically: true, encoding: .utf8)
+                NSApp.abortModal()                          // as Quit there
+            }
+        }
+        RunLoop.main.add(modalCheck, forMode: .modalPanel)
+        try? await Task.sleep(nanoseconds: 4_500_000_000)
+        note()
+        if let sheet = window.attachedSheet {
+            let buttons = sheet.contentView.map { allSubviews($0) }?.compactMap { $0 as? NSButton } ?? []
+            s += "buttons \(buttons.map(\.title))\n"
+            buttons.first { $0.title == "OK" }?.performClick(nil)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note()
+        }
+        try? s.write(toFile: dir + "/enginestop.txt", atomically: true, encoding: .utf8)
+        NSApp.terminate(nil)
+    }
+
+    private func allSubviews(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap { allSubviews($0) } }
+
     /// The sidebar's right-click menu on a figure: copy, paste (a <name>_copy shown), delete (the one next to it
     /// shown), undo (back): FIGNIMBLE_SHOTS_SCENE=figmenu, into figmenu.txt.
     func figureMenuTest(_ dir: String) async {
@@ -58,6 +96,7 @@ extension MainController {
         Task { @MainActor in
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "blank" { await blankShots(dir); return }
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "window" { windowReport(dir); return }
+            if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "enginestop" { await engineStopReport(dir); return }
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "figmenu" { await figureMenuTest(dir); return }
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "remote" { await remoteShots(dir); return }
             // with FIGNIMBLE_TEST_SETUP the Python is set up first, which takes a while
