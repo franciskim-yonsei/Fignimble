@@ -60,14 +60,19 @@ class Server(paramiko.ServerInterface):
 
     @staticmethod
     def shell(channel):
-        try:
-            reader = channel.makefile("rb")
-            assert reader.readline().strip() == b"exec project-shell"
-            channel.sendall(b"project shell\r\n")
+        def read_input():
             request = bytearray()
             while not request.endswith(b"\r"):
-                request.extend(channel.recv(1024))
-            assert request == b"pwd\r"
+                chunk = channel.recv(1024)
+                if not chunk:
+                    raise EOFError("Terminal closed without sending the next command")
+                request.extend(chunk)
+            return bytes(request)
+
+        try:
+            assert read_input() == b"exec project-shell\r"
+            channel.sendall(b"project shell\r\n")
+            assert read_input() == b"pwd\r"
             channel.sendall(b"/work/project\r\n")
         finally:
             channel.close()
