@@ -48,12 +48,12 @@ public partial class MainWindow
 
     private bool ConfirmDiscardDrafts() => ConfirmDiscardCode() && ConfirmDiscardCaption();
 
-    private bool ConfirmFigureSwitch()
+    private bool ConfirmFigureAction(string action)
     {
         if (!CodeDirty && !CaptionDirty) return true;
         var dialog = new FormDialog(this, "Unsaved figure changes") { Width = 450 };
-        dialog.Note("Apply your changes before opening the selected figure?");
-        return dialog.ConfirmAsync("Apply and Switch", async () =>
+        dialog.Note("Apply your changes before continuing?");
+        return dialog.ConfirmAsync("Apply and " + action, async () =>
         {
             if (CodeDirty && codePath is { } path)
             {
@@ -68,7 +68,7 @@ public partial class MainWindow
                 captionOriginal = draft;
             }
             return null;
-        }, ("Discard and Switch", () => { }));
+        }, ("Discard and " + action, () => { }));
     }
 
     private void SelectCodePicker()

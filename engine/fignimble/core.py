@@ -1815,6 +1815,110 @@ class Session:
 
     # --- files the editor adds ---
 
+    def _sidebar_figure(self, name: str) -> tuple[Path, str]:
+        if not name or name in (".", "..") or any(c in name for c in ("/", "\\", ":")):
+            raise EditError("Choose a figure from the project.")
+        path = Path(self.figure_file(name))
+        if path.is_symlink():
+            raise EditError("Figure file actions require a file in the project, rather than a symbolic link.")
+        text = path.read_text(encoding="utf-8")
+        if not is_figure_source(text):
+            raise EditError(f"{path.name} is not a figure.")
+        return path, text
+
+    def _own_table_files(self, name: str, text: str) -> list[Path]:
+        """A table's companion CSV/TSV travels with it when no other figure refers to that file."""
+        files = []
+        for ext in TABLE_FILES:
+            rel = f"tables/{name}{ext}"
+            path = self.project / rel
+            if (rel in text and path.is_file() and not path.is_symlink()
+                    and path.resolve().is_relative_to(self.project)
+                    and not any(rel in p.read_text(encoding="utf-8", errors="replace")
+                                for p in self.project.glob("*.py") if p.stem != name)):
+                files.append(path)
+        return files
+
+    def copy_figure(self, a: dict) -> dict:
+        name = a["name"]
+        with self.edit_lock:
+            _, text = self._sidebar_figure(name)
+            data = {p.relative_to(self.project).as_posix(): p.read_text(encoding="utf-8")
+                    for p in self._own_table_files(name, text)}
+        return {"ok": True, "name": name, "text": text, "data": data}
+
+    def paste_figure(self, a: dict) -> dict:
+        original = a["name"]
+        base = re.sub(r"\W", "_", original).strip("_") or "fig"
+        if base[0].isdigit():
+            base = "fig_" + base
+        text = a["text"]
+        if not is_figure_source(text):
+            raise EditError("The copied file is not a figure.")
+        data = a.get("data") or {}
+        companion_paths = {f"tables/{original}{ext}" for ext in TABLE_FILES}
+        if any(rel not in companion_paths or rel not in text for rel in data):
+            raise EditError("Invalid companion table files.")
+        extensions = [Path(rel).suffix for rel in data]
+        tables_dir = self.project / "tables"
+        if data and not tables_dir.resolve().is_relative_to(self.project):
+            raise EditError("The tables folder is outside the project.")
+        with self.edit_lock:
+            name = base
+            index = 0
+            while (self.project / f"{name}.py").exists() or any((tables_dir / (name + ext)).exists() for ext in extensions):
+                index += 1
+                name = f"{base}_copy" + (str(index) if index > 1 else "")
+            files = {}
+            for rel, content in data.items():
+                new_rel = f"tables/{name}{Path(rel).suffix}"
+                text = text.replace(rel, new_rel)
+                files[self.project / new_rel] = content
+            files[self.project / f"{name}.py"] = text
+            ast.parse(text)
+            payloads = {path: content.encode("utf-8") for path, content in files.items()}
+            written = {}
+            try:
+                for path, payload in payloads.items():
+                    path.parent.mkdir(exist_ok=True)
+                    with path.open("xb") as stream:
+                        written[str(path)] = (None, payload)
+                        stream.write(payload)
+            except OSError:
+                for path in written:
+                    Path(path).unlink(missing_ok=True)
+                raise
+            self.history.append({"label": "Paste Figure", "files": written})
+            self.redo.clear()
+            self._sig = self.fingerprint()
+        return {"ok": True, "name": name}
+
+    def delete_figure(self, a: dict) -> dict:
+        name = a["name"]
+        with self.edit_lock:
+            path, text = self._sidebar_figure(name)
+            used = [p.stem for p in self.project.glob("*.py") if p != path
+                    and f"{name}.py" in p.read_text(encoding="utf-8", errors="replace")]
+            files = [path, *self._own_table_files(name, text)]
+            written = {str(p): (p.read_bytes(), None) for p in files}
+            removed = []
+            try:
+                for p in files:
+                    p.unlink()
+                    removed.append(p)
+            except OSError:
+                for p in removed:
+                    with p.open("xb") as stream:
+                        stream.write(written[str(p)][0])
+                raise
+            self.history.append({"label": "Delete Figure", "files": written})
+            self.redo.clear()
+            self.renders.pop(name, None)
+            if self.current == name:
+                self.current = None
+            self._sig = self.fingerprint()
+        return {"ok": True, "usedBy": used}
+
     def new_figure(self, a: dict) -> dict:
         """A new figure file: {name, width, height, journal?}, or a poster: {name, poster, landscape?}."""
         name = a.get("name") or ("poster" if a.get("poster") else "fig")
@@ -2036,6 +2140,12 @@ class Session:
             fit = self.history.pop()                    # one undo step with the new files
             self.history[-1]["files"][str(path)] = (None, fit["files"][str(path)][1])
         return {"ok": True, "name": name}
+
+    def export_source_data(self, a: dict) -> dict:
+        with self.render_lock:
+            result = self.worker.request({"cmd": "source_data", "project": str(self.project), "cache": str(self.cache),
+                                          "file": self.figure_file(a["figure"]), "path": a["path"]}, timeout=600)
+        return {"ok": True, **result}
 
     def export(self, a: dict) -> dict:
         fmt = (a.get("format") or Path(a["path"]).suffix.lstrip(".")).lower()

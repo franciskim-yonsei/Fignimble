@@ -164,7 +164,8 @@ internal sealed class EngineClient : IDisposable
                 await process.StandardInput.FlushAsync();
             }
             finally { sendGate.Release(); }
-            int timeout = command is "install" or "install_remote_engine_packages" ? 1850 : Remote is not null || command is "export" or "export_table" ? 620 : 200;
+            int timeout = command is "install" or "install_remote_engine_packages" ? 1850
+                : Remote is not null || command is "export" or "export_table" or "export_source_data" ? 620 : 200;
             JsonElement result = await request.Task.WaitAsync(TimeSpan.FromSeconds(timeout));
             if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("ok", out var ok) &&
                 ok.ValueKind == JsonValueKind.False)

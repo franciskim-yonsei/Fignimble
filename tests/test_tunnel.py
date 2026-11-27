@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,38 @@ def wait_for(cond, timeout=10):
             return True
         time.sleep(0.2)
     return False
+
+
+def test_remote_figure_files_and_source_data(tmp_path, server):
+    proj = server / "proj"
+    (proj / "tables").mkdir()
+    (proj / "tables" / "source_table.csv").write_text("dose,response\n1,2\n", encoding="utf-8")
+    (proj / "source_table.py").write_text(
+        'from fignimble import Figure\nfig = Figure(width=100, height=80)\n'
+        'fig.table("tables/source_table.csv", x=1, y=1, w=50, h=30)\n', encoding="utf-8")
+    app = App(tmp_path, server)
+    try:
+        app("open", project=str(app.mirror))
+        copy = app("copy_figure", name="source_table")
+        assert copy["data"] == {"tables/source_table.csv": "dose,response\n1,2\n"}
+        pasted = app("paste_figure", name=copy["name"], text=copy["text"], data=copy["data"])["name"]
+        pasted_source = app.mirror / f"{pasted}.py"
+        pasted_data = app.mirror / "tables" / f"{pasted}.csv"
+        assert pasted == "source_table_copy" and f"tables/{pasted}.csv" in pasted_source.read_text(encoding="utf-8")
+        assert pasted_data.is_file()
+        assert app("delete_figure", name=pasted)["ok"]
+        assert not pasted_source.exists() and not pasted_data.exists()
+        assert (app.mirror / "tables" / "source_table.csv").is_file()
+        assert app("undo")["ok"] and pasted_source.is_file() and pasted_data.is_file()
+        output = tmp_path / "plotted source.xlsx"
+        result = app("export_source_data", figure="fig1", path=str(output))
+        assert result["path"] == str(output)
+        assert len(result["sheets"]) > 1
+        with zipfile.ZipFile(output) as workbook:
+            assert workbook.testzip() is None
+            assert b"Panel " in workbook.read("xl/workbook.xml")
+    finally:
+        assert app.close() == 0
 
 
 def test_remote_open_includes_state_after_sending_offline_edits(tmp_path, server):

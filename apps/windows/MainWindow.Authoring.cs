@@ -11,7 +11,12 @@ public partial class MainWindow
     private async void NewProjectClicked(object sender, RoutedEventArgs e)
     {
         JournalChoice[] choices = [];
-        await During("Loading project presets…", async () => { choices = await Journals(); Status.Text = "Choose a project preset."; });
+        await During("Loading project presets…", async () =>
+        {
+            if (await PrepareLocalPython(null) is null) return;
+            choices = await Journals();
+            Status.Text = "Choose a project preset.";
+        });
         if (choices.Length == 0) return;
         var setup = new FormDialog(this, "New project");
         var journal = setup.Choice("Shared project style", choices.Prepend(GeneralJournal),

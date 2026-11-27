@@ -9,5 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="../../apps/windows/Fignimble.csproj" />
     <None Update="rpc.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../engine/fignimble/requirements.py" Link="requirements.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

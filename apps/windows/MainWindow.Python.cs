@@ -13,6 +13,8 @@ public partial class MainWindow
     private sealed record PackageInstall(bool Ok, string Output);
     private static readonly JsonSerializerOptions PythonJson = new(JsonSerializerDefaults.Web);
     private readonly Dictionary<string, string> pythonSelections = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> offeredPackages = new(StringComparer.Ordinal);
+    private string? launcherPython;
     private string PythonSettings => Path.Combine(settingsDirectory, "python.json");
 
     private void LoadPythonSettings()
@@ -28,12 +30,141 @@ public partial class MainWindow
 
     private string ProjectPython(string? folder)
     {
-        if (Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON") is { } env && !string.IsNullOrWhiteSpace(env)) return env;
-        if (folder is not null && pythonSelections.TryGetValue(folder, out var projectExe)) return projectExe;
+        string ResolveLauncher(string executable) => executable.Equals("python.exe", StringComparison.OrdinalIgnoreCase)
+            ? launcherPython ?? executable : executable;
+        if (Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON") is { } env && !string.IsNullOrWhiteSpace(env)) return ResolveLauncher(env);
+        if (folder is not null && pythonSelections.TryGetValue(folder, out var projectExe)) return ResolveLauncher(projectExe);
         string discovered = EngineClient.ResolvePython(folder);
         if (folder is not null && new[] { ".venv", "venv" }.Any(v =>
             string.Equals(Path.Combine(folder, v, "Scripts", "python.exe"), discovered, StringComparison.OrdinalIgnoreCase))) return discovered;
-        return pythonSelections.GetValueOrDefault("") ?? discovered;
+        return ResolveLauncher(pythonSelections.GetValueOrDefault("") ?? discovered);
+    }
+
+    private async Task<PackageReport?> PrepareLocalPython(string? folder)
+    {
+        string selected = ProjectPython(folder);
+        bool barePython = selected.Equals("python.exe", StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            if (!barePython) return await RunPythonTool<PackageReport>(selected, folder, null);
+            // Avoid invoking the Microsoft Store alias when there is no interpreter on PATH.
+            var pathPython = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+                .Where(dir => Path.IsPathFullyQualified(dir) && !dir.TrimEnd('\\').EndsWith("\\Microsoft\\WindowsApps", StringComparison.OrdinalIgnoreCase))
+                .Select(dir => Path.Combine(dir, "python.exe")).FirstOrDefault(File.Exists);
+            if (pathPython is not null)
+            {
+                var report = await RunPythonTool<PackageReport>(pathPython, folder, null);
+                launcherPython = report.Python;
+                return report;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON")))
+                throw new InvalidOperationException("FIGNIMBLE_PYTHON points to an interpreter that Fignimble could not use. " + ex.Message, ex);
+        }
+
+        if (barePython && await FindLauncherPython(folder) is { } discovered)
+        {
+            launcherPython = discovered.Python;
+            return discovered;
+        }
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIGNIMBLE_PYTHON")))
+            throw new InvalidOperationException("FIGNIMBLE_PYTHON points to an interpreter that Fignimble could not find.");
+
+        var dialog = new FormDialog(this, "Set up Python for Fignimble") { Width = 475 };
+        dialog.Note("Choose an existing Python 3.10 or newer, or leave the field blank to download Python and create a private environment for Fignimble.");
+        var input = PythonPicker(dialog, "Existing Python executable", File.Exists(selected) ? selected : "");
+        PackageReport? report = null;
+        if (!dialog.ConfirmAsync("Set Up Python", async () =>
+        {
+            string candidate = input.Text.Trim();
+            if (candidate.Length == 0) candidate = await ManagedPython.SetUp(settingsDirectory, null);
+            else if (!Path.IsPathFullyQualified(candidate) || !File.Exists(candidate))
+                return "Choose an existing Python executable by its full path.";
+            report = await RunPythonTool<PackageReport>(candidate, folder, null);
+            pythonSelections[folder ?? ""] = report.Python;
+            SaveSetting(PythonSettings, pythonSelections);
+            return null;
+        })) return null;
+        return report;
+    }
+
+    private static async Task<PackageReport?> FindLauncherPython(string? folder)
+    {
+        try
+        {
+            var start = new ProcessStartInfo("py.exe") { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true };
+            start.ArgumentList.Add("-0p"); // List existing interpreters without triggering Python Install Manager.
+            using var process = Process.Start(start);
+            if (process is null) return null;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var errors = process.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await process.WaitForExitAsync(timeout.Token); }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                return null;
+            }
+            _ = await errors;
+            string versions = await output;
+            if (process.ExitCode != 0) return null;
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                versions, @"(?im)\s+([a-z]:\\[^\r\n]+?python\.exe)\s*$"))
+            {
+                string path = match.Groups[1].Value;
+                if (!File.Exists(path)) continue;
+                try { return await RunPythonTool<PackageReport>(path, folder, null); }
+                catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException or TimeoutException) { }
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or InvalidOperationException or TimeoutException)
+        { return null; }
+    }
+
+    private static System.Windows.Controls.TextBox PythonPicker(FormDialog dialog, string label, string value)
+    {
+        var input = dialog.Text(label, value);
+        var browse = new System.Windows.Controls.Button { Content = "Browse for Python…" };
+        dialog.Add("", browse);
+        browse.Click += (_, _) =>
+        {
+            var pick = new OpenFileDialog { Title = "Choose Python", Filter = "Python executable|*.exe", CheckFileExists = true };
+            if (pick.ShowDialog(dialog) == true) input.Text = pick.FileName;
+        };
+        return input;
+    }
+
+    private async Task OfferProjectPackages(PackageReport report, string folder, EngineClient? remote = null)
+    {
+        var needs = report.Engine.Concat(report.Project).ToArray();
+        var requirements = needs.Select(n => n.Requirement).Distinct().Order(StringComparer.Ordinal).ToArray();
+        string offer = folder + "\n" + report.Python + "\n" + string.Join("\n", requirements);
+        if (needs.Length == 0 || !offeredPackages.Add(offer) || !ConfirmPackages(report, remote is not null, needs)) return;
+        Status.Text = remote is null ? "Installing Python packages…" : "Installing Python packages on the SSH server…";
+        try
+        {
+            var installed = remote is null ? await RunPythonTool<PackageInstall>(report.Python, folder, requirements)
+                : await remote.CallAsync<PackageInstall>("install", new { requirements });
+            if (!installed.Ok) throw new InvalidOperationException(installed.Output);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Python package installation failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private bool ConfirmPackages(PackageReport report, bool remote, PackageNeed[] needs)
+    {
+        var dialog = new FormDialog(this, "Check Python Packages") { Width = 475 };
+        dialog.Note((remote ? "On the SSH server: " : "Local Python: ") + report.Python);
+        if (needs.Length == 0) { dialog.Note("All declared requirements are satisfied."); dialog.Confirm("OK", () => null); return false; }
+        foreach (var item in needs) dialog.Note($"{item.Requirement} — {item.Why}");
+        dialog.Note("Install only requirements from a project you trust. pip may run package build code in the selected environment.");
+        return dialog.Confirm("Install listed packages", () => null);
     }
 
     private async Task ChoosePython()
@@ -43,17 +174,11 @@ public partial class MainWindow
         { Status.Text = "FIGNIMBLE_PYTHON is set. It takes precedence over the saved interpreter."; return; }
         if (CodeDirty || CaptionDirty) { Status.Text = "Apply or discard the current draft before changing Python."; return; }
         string? folder = project;
-        var dialog = new FormDialog(this, "Python Setup");
+        var dialog = new FormDialog(this, "Python Setup") { Width = 530 };
         dialog.Note(folder is null ? "Choose the default Python. A project’s own .venv or venv still takes priority."
             : "Choose Python for this project. Applying reopens it and clears the app’s undo history. Existing terminal sessions keep their current environments.");
-        var input = dialog.Text("Python executable (blank to autodetect)", ProjectPython(folder));
-        var browse = new System.Windows.Controls.Button { Content = "Browse for Python…" };
-        dialog.Add("", browse);
-        browse.Click += (_, _) =>
-        {
-            var pick = new OpenFileDialog { Title = "Choose Python", Filter = "Python executable|*.exe", CheckFileExists = true };
-            if (pick.ShowDialog(dialog) == true) input.Text = pick.FileName;
-        };
+        var input = PythonPicker(dialog, "Python executable (blank to autodetect)", ProjectPython(folder));
+        bool privateEnvironment = false;
         if (!dialog.ConfirmAsync("Use Python", async () =>
         {
             string requested = input.Text.Trim();
@@ -63,7 +188,18 @@ public partial class MainWindow
             string candidate = requested.Length == 0 ? EngineClient.ResolvePython(folder) : requested;
             await RunPythonTool<PackageReport>(candidate, folder, null);
             return null;
-        })) return;
+        }, ("Create Private Environment", () => privateEnvironment = true))) return;
+        if (privateEnvironment)
+        {
+            string? managed = null;
+            await During("Setting up private Python…", async () =>
+            {
+                var candidate = await PrepareLocalPython(folder);
+                if (candidate is not null) managed = await ManagedPython.SetUp(settingsDirectory, candidate.Python);
+            });
+            if (managed is null) return;
+            input.Text = managed;
+        }
         string key = folder ?? "";
         string previous = pythonSelections.GetValueOrDefault(key) ?? "";
         string value = input.Text.Trim();
@@ -99,13 +235,8 @@ public partial class MainWindow
             Status.Text = report.Engine.Length + report.Project.Length == 0 ? $"Python packages are ready: {report.Python}" : $"Missing Python packages: {report.Python}";
         });
         if (report is null) return;
-        var dialog = new FormDialog(this, "Check Python Packages") { Width = 475 };
-        dialog.Note((remote ? "On the SSH server: " : "Local Python: ") + report.Python);
         var needs = report.Engine.Concat(report.Project).ToArray();
-        if (needs.Length == 0) { dialog.Note("All declared requirements are satisfied."); dialog.Confirm("OK", () => null); return; }
-        foreach (var item in needs) dialog.Note($"{item.Requirement} — {item.Why}");
-        dialog.Note("Install only requirements from a project you trust. pip may run package build code in the selected environment.");
-        if (!dialog.Confirm("Install listed packages", () => null)) return;
+        if (!ConfirmPackages(report, remote, needs)) return;
         var requirements = needs.Select(p => p.Requirement).Distinct().ToArray();
         await During("Installing listed Python packages…", async () =>
         {

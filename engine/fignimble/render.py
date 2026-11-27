@@ -142,6 +142,7 @@ class Renderer:
         self.raster_dpi = 600                    # what panels draw their rasters at (imshow, rasterized scatters)
         self._stack: list[Path] = []             # the figure files being drawn, outermost first (fig.figure nests)
         self.used: set[Path] = set()             # the files the last render read, for an export's provenance
+        self.source_data_panels: dict | None = None
 
     # --- running user code ---
 
@@ -551,6 +552,9 @@ class Renderer:
         self._stack.append(path)
         try:
             sp, sinfos, slabels = self.pieces(sub)
+            if self.source_data_panels is not None:
+                jobs, rc = self.source_data_panels[None]
+                self.source_data_panels[oid] = path.name, jobs, rc, slabels
             said = self.preflight(sub, sp, sinfos, slabels)
         finally:
             self._stack.pop()
@@ -927,6 +931,8 @@ class Renderer:
                 w, h = h, w                             # drawn upright, then turned into its box
             j["size"] = (w, h)
             j["base"] = self._panel_base(j["props"], w, h, rc, deps, j["collect"], j["background"])
+        if self.source_data_panels is not None:
+            self.source_data_panels[None] = jobs, rc
         targets = _align_targets(jobs) if jobs else {}
         pieces = []
         for s_ in steps:

@@ -14,6 +14,11 @@ for line in sys.stdin:
         project = Path(request["project"])
         reply["result"] = {"ok": True}
     elif command == "state":
+        if (project / "hold-state").exists():
+            (project / "started-state").touch()
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and (project / "hold-state").exists():
+                time.sleep(0.025)
         reply["result"] = {
             "figures": [{"name": name} for name in ("first", "slow", "skipped", "last", "failed")],
             "canUndo": False,
@@ -35,6 +40,13 @@ for line in sys.stdin:
                 "figure": name, "file": str(project / (name + ".py")), "size": [100, 80],
                 "pxPerMM": request["pxPerMM"],
             }
+    elif command == "write_source":
+        path = Path(request["file"])
+        if request["expected"] != path.read_text(encoding="utf-8") or request["check_syntax"] is not True:
+            reply["error"] = "Source changed outside the editor."
+        else:
+            path.write_text(request["text"], encoding="utf-8")
+            reply["result"] = {"ok": True}
     else:
         reply["error"] = f"Unexpected command: {command}"
     print(json.dumps(reply), flush=True)

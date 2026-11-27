@@ -1,9 +1,13 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Fignimble.Windows;
+using ICSharpCode.AvalonEdit;
 
 internal static class Program
 {
@@ -11,9 +15,11 @@ internal static class Program
     private static int Main(string[] args)
     {
         string root = Path.Combine(Path.GetTempPath(), "fignimble-navigation-" + Guid.NewGuid().ToString("N"));
+        if (args is ["--test-managed-python"]) return CheckManagedPython(root);
         string fixture = Directory.CreateDirectory(Path.Combine(root, "engine", "fignimble")).FullName;
         string project = Directory.CreateDirectory(Path.Combine(root, "project")).FullName;
         File.Copy(Path.Combine(AppContext.BaseDirectory, "rpc.py"), Path.Combine(fixture, "rpc.py"));
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "requirements.py"), Path.Combine(fixture, "requirements.py"));
         foreach (var name in new[] { "first", "slow", "skipped", "last", "failed" })
             File.WriteAllText(Path.Combine(project, name + ".py"), "# Navigation test fixture\n");
         Environment.SetEnvironmentVariable("FIGNIMBLE_PYTHON", args[0]);
@@ -33,6 +39,27 @@ internal static class Program
             return app.Run(window);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static int CheckManagedPython(string root)
+    {
+        var setup = typeof(MainWindow).Assembly.GetType("Fignimble.Windows.ManagedPython")!.GetMethod("SetUp")!;
+        try
+        {
+            string python = ((Task<string>)setup.Invoke(null, [root, null])!).GetAwaiter().GetResult();
+            var start = new ProcessStartInfo(python) { UseShellExecute = false };
+            foreach (string part in new[] { "-c", "import sys, pip; assert sys.prefix != sys.base_prefix; print(sys.version)" })
+                start.ArgumentList.Add(part);
+            using var process = Process.Start(start)!;
+            if (!process.WaitForExit(30_000) || process.ExitCode != 0)
+                throw new Exception("The managed Python environment did not start with pip.");
+            Console.WriteLine("Verified the Python download and private environment on Windows.");
+            return 0;
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     private static async Task CheckNavigation(MainWindow window, string project)
@@ -67,13 +94,49 @@ internal static class Program
             await Until(() => page.IsEnabled && status.Text == "Figure not found", () => status.Text);
             if (figures.SelectedIndex != 3 || !figures.IsEnabled)
                 throw new Exception("A failed selection did not return to the last figure.");
-            Console.WriteLine("Verified that the Windows figure list stays enabled, shows the latest selection, and recovers from errors.");
+
+            string holdState = Path.Combine(project, "hold-state");
+            File.WriteAllText(holdState, "");
+            var reload = (Task)typeof(MainWindow).GetMethod("Reload", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+            try
+            {
+                await Until(() => File.Exists(Path.Combine(project, "started-state")), () => status.Text);
+                if (!figures.IsEnabled) throw new Exception("Automatic refresh disabled figure selection.");
+                figures.SelectedIndex = 0;
+            }
+            finally { File.Delete(holdState); }
+            await reload.WaitAsync(TimeSpan.FromSeconds(15));
+            if (figures.SelectedIndex != 0 || !status.Text.StartsWith("first —"))
+                throw new Exception("The automatic refresh discarded a selection made while reading project state.");
+
+            var editor = (TextEditor)window.FindName("SourceText");
+            const string draft = "# Draft to save before switching\n";
+            editor.Text = draft;
+            var click = window.Dispatcher.InvokeAsync(() =>
+            {
+                var dialog = Application.Current.Windows.OfType<Window>().Single(w => w.Title == "Unsaved figure changes");
+                var button = Descendants(dialog).OfType<Button>().Single(b => (string)b.Content == "Apply and Switch");
+                button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }, DispatcherPriority.ApplicationIdle);
+            figures.SelectedIndex = 3;
+            await click.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await Until(() => page.IsEnabled && status.Text.StartsWith("last —"), () => status.Text);
+            if (File.ReadAllText(Path.Combine(project, "first.py")) != draft)
+                throw new Exception("The draft was not applied before switching figures.");
+            Console.WriteLine("Verified navigation during rendering and automatic refresh, recovery from errors, and applying a draft while switching.");
         }
         finally
         {
             File.WriteAllText(unblock, "");
             statusProperty.RemoveValueChanged(status, recordStatus);
         }
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject element)
+    {
+        yield return element;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(element); i++)
+            foreach (var child in Descendants(VisualTreeHelper.GetChild(element, i))) yield return child;
     }
 
     private static async Task Until(Func<bool> ready, Func<string> status)

@@ -46,8 +46,14 @@ jobs:
           python tests/windows_ssh/smoke.py
 
       - name: Test switching figures during a slow render
+        timeout-minutes: 3
         shell: pwsh
         run: dotnet run --project tests/windows_navigation -- (Get-Command python).Source
+
+      - name: Verify private Python setup on Windows
+        timeout-minutes: 5
+        shell: pwsh
+        run: dotnet run --project tests/windows_navigation --no-build -- --test-managed-python
 
       - name: Build the Windows installer and portable ZIP
         shell: pwsh
@@ -59,7 +65,7 @@ jobs:
           $archive = [IO.Compression.ZipFile]::OpenRead($zip)
           try {
             $files = $archive.Entries.FullName -replace '\\', '/'
-            foreach ($required in @('Fignimble.exe', 'coreclr.dll', 'Renci.SshNet.dll', 'SSH-LICENSES.txt', 'engine/fignimble/rpc.py', 'engine/fignimble/ssh_pipe.py', 'setup-python.ps1')) {
+            foreach ($required in @('Fignimble.exe', 'coreclr.dll', 'Renci.SshNet.dll', 'SSH-LICENSES.txt', 'engine/fignimble/rpc.py', 'engine/fignimble/ssh_pipe.py', 'engine/fignimble/sourcedata.py', 'setup-python.ps1')) {
               if ("Fignimble/$required" -notin $files) { throw "Missing from ZIP: $required" }
             }
           } finally {

@@ -44,7 +44,8 @@ from . import mirror, remote
 
 PACKAGE = Path(__file__).resolve().parent
 # answered from what the engine already has: no project files change, so nothing to fetch afterwards
-READ_ONLY = {"state", "figure", "journals", "requirements", "copy", "export", "export_table", "remote_hosts",
+EXPORTS = {"export", "export_table", "export_source_data"}
+READ_ONLY = EXPORTS | {"state", "figure", "journals", "requirements", "copy", "copy_figure", "remote_hosts",
              "remote_list", "manifest", "read_files"}
 BATCH = 16 * 1024 * 1024                         # bytes of files fetched per request
 NEEDS_ENGINE, NEEDS_PACKAGES = 97, 98
@@ -324,7 +325,7 @@ class Tunnel:
                         initial_state = self.pull(open_options=ctx if cmd == "open" else None)
                         if initial_state is not None:
                             res["state"] = initial_state
-                    if cmd in ("export", "export_table") and ctx and isinstance(res, dict) and res.get("path"):
+                    if cmd in EXPORTS and ctx and isinstance(res, dict) and res.get("path"):
                         got = self.call("read_files", paths=[res["path"]])["files"].get(res["path"])
                         if got:
                             _write_atomic(Path(ctx), base64.b64decode(got["data"]))
@@ -500,7 +501,7 @@ class Tunnel:
             if cmd in ("import_file", "paste_image") or (cmd == "edit" and req.get("op") == "replace_source"):
                 if self.local_path(req.get("path")) and os.path.isfile(req["path"]):
                     req["path"] = self.upload(req["path"])
-            elif cmd in ("export", "export_table"):
+            elif cmd in EXPORTS:
                 ctx = req["path"]                       # where the app wants it
                 req["path"] = self.call("staging_path", name=Path(ctx).name)["path"]
             elif cmd in ("import_remote", "update_remote"):

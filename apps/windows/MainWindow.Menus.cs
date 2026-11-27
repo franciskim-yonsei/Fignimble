@@ -111,6 +111,7 @@ public partial class MainWindow
             MenuAction(menu, "Export Figure…", () => ExportClicked(this, new RoutedEventArgs()), !busy && validFigure, "Ctrl+E");
             MenuAction(menu, "Export All Figures as PDF…", ChooseBatchFolder, !busy && state?.Figures is { Length: > 0 }, "Ctrl+Shift+E");
             MenuAction(menu, "Export Table…", ChooseTableExport, !busy && TableToExport is not null);
+            MenuAction(menu, "Export Source Data…", ChooseSourceDataExport, !busy && validFigure);
             menu.Items.Add(new Separator());
             MenuAction(menu, "Choose External Editor…", ChooseExternalEditor, !busy);
             MenuAction(menu, "Reveal Source File in Explorer", RevealSource, !busy && codePath is not null);

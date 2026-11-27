@@ -1,6 +1,6 @@
 """The render worker: a long-lived process that runs figure code, so matplotlib is imported once.
 
-JSON lines on stdin/stdout: {"id", "cmd": "render"|"export"|"ping", ...} -> {"id", "result"} or {"id", "error"}.
+JSON lines on stdin/stdout: {"id", "cmd": "render"|"export"|"source_data"|"ping", ...} -> {"id", "result"} or {"id", "error"}.
 User code that prints goes to stderr (the engine's log), never into the protocol.
 """
 
@@ -38,6 +38,10 @@ def main():
                                    dark=bool(req.get("dark")), cmyk=bool(req.get("cmyk")),
                                    outline=bool(req.get("outline")), journal=req.get("journal"),
                                    bleed=float(req.get("bleed") or 0), marks=bool(req.get("marks")))
+                elif cmd == "source_data":
+                    from . import sourcedata
+
+                    res = sourcedata.export(r, req["file"], req["path"])
                 else:
                     raise ValueError(f"unknown worker command {cmd}")
             out.write(json.dumps({"id": req.get("id"), "result": res}) + "\n")

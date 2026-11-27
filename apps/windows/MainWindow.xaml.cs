@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         this.settingsDirectory = settingsDirectory;
         InitializeComponent();
         SetupWorkspace();
+        SetupFigureFiles();
         SetupArrangement();
         SetupCode();
         SetupDrawing();
@@ -161,6 +162,9 @@ public partial class MainWindow : Window
     private async Task OpenProjectCore(string folder, string? first)
     {
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException($"Project folder not found: {folder}");
+        var packages = await PrepareLocalPython(folder);
+        if (packages is null) return;
+        await OfferProjectPackages(packages, folder);
         ResetProject();
         await GetEngine(folder).CallAsync<JsonElement>("open", new { project = folder });
         project = folder;
@@ -268,7 +272,7 @@ public partial class MainWindow : Window
         {
             if (!draftsResolved && selected.Name != shownFigure)
             {
-                if (!ConfirmFigureSwitch())
+                if (!ConfirmFigureAction("Switch"))
                 {
                     RestoreFigureSelection();
                     Status.Text = shownFigure is null ? "Figure switch canceled." : $"Still showing {shownFigure}.";

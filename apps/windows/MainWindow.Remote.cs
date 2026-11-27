@@ -43,6 +43,7 @@ public partial class MainWindow
         await During("Reading SSH config…", async () =>
         {
             // Listing aliases must not replace a disconnected project's SSH engine with a local one.
+            if (engine is not { Running: true } && await PrepareLocalPython(null) is null) return;
             using var temporary = engine is { Running: true } ? null : new EngineClient(ProjectPython(null));
             aliases = (await (temporary ?? engine!).CallAsync<SshHosts>("remote_hosts")).Hosts;
             Status.Text = "Choose an SSH host.";
@@ -119,6 +120,7 @@ public partial class MainWindow
         Task Connect() => During("Connecting over SSH…", async () =>
         {
             if (!ValidHost(host)) throw new ArgumentException("Invalid SSH host.");
+            if (await PrepareLocalPython(null) is null) return;
             var ssh = interactive ? await SignIn(this, host) : null;
             string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(host + "\n" + path)))[..24].ToLowerInvariant();
             string mirror = Path.Combine(settingsDirectory, "remote", hash);
@@ -138,6 +140,12 @@ public partial class MainWindow
             project = mirror;
             UpdateShellHeader();
             Title = $"Fignimble — {host}:{path}";
+            try
+            {
+                var packages = await client.CallAsync<PackageReport>("requirements");
+                await OfferProjectPackages(packages, mirror, client);
+            }
+            catch (Exception ex) { Status.Text = "Could not check packages on the SSH server. " + ex.Message; }
             if (TerminalRequested) StartShell();
             await RefreshProject(preferred, initialState: remoteOpen.State);
             RememberProject(shownFigure);
