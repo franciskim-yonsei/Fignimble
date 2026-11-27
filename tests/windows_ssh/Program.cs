@@ -13,6 +13,7 @@ bool Verify(HostKeyEventArgs key) => trusted = key.FingerPrintSHA256 == fingerpr
 using var password = InteractiveSshSession.Connect("fixture", endpoint, "test-password", Verify,
     _ => throw new Exception("Password login unexpectedly fell back to keyboard prompts."));
 if (!trusted || !password.IsConnected) throw new Exception("Password login failed.");
+Console.WriteLine("Password sign-in passed.");
 
 trusted = false;
 using var session = InteractiveSshSession.Connect("fixture", endpoint, "", Verify, request =>
@@ -23,10 +24,12 @@ using var session = InteractiveSshSession.Connect("fixture", endpoint, "", Verif
     prompt.Response = "31337";
     Interlocked.Increment(ref prompts);
 });
+Console.WriteLine("Keyboard-interactive sign-in passed.");
 
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 var data = Enumerable.Range(0, 180000).Select(i => (byte)(i % 256)).ToArray();
 await Task.WhenAll(Relay("echo-input", data, 0), Relay("fail-fast", "out\0\n"u8.ToArray(), 23));
+Console.WriteLine("Concurrent SSH commands passed.");
 using (var shell = session.OpenShell(80, 24, "project-shell"))
 {
     var first = await Task.Run(shell.ReadLine, timeout.Token).WaitAsync(timeout.Token);
@@ -35,6 +38,9 @@ using (var shell = session.OpenShell(80, 24, "project-shell"))
     shell.Write("pwd\r");
     var reply = await Task.Run(shell.ReadLine, timeout.Token).WaitAsync(timeout.Token);
     if (reply != "/work/project") throw new Exception($"Unexpected shell directory: {reply}");
+    // Drain to EOF before disposing, as the terminal panel does after a remote exit.
+    var end = await Task.Run(shell.ReadLine, timeout.Token).WaitAsync(timeout.Token);
+    if (end is not null) throw new Exception($"Unexpected output after the shell exited: {end}");
 }
 if (prompts != 1) throw new Exception($"Expected one verification prompt, observed {prompts}.");
 Console.WriteLine("Verified password and keyboard-interactive sign-in, concurrent SSH commands and a terminal on one connection.");
