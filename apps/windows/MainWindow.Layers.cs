@@ -385,7 +385,6 @@ public partial class MainWindow
         PageView.Height = h * scale;
         PageView.Effect = zoom <= 1 ? PaperShadow : null;
         ZoomText.Text = zoom == 1 ? "Fit" : $"{zoom:P0} of fit";
-        SchedulePreview();
     }
 
     private double FitScale(double width, double height) => Math.Min(Math.Max(1, Viewport.ActualWidth - 30) / width,

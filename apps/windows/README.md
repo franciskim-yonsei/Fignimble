@@ -68,6 +68,7 @@ The left sidebar has figure thumbnails and layers; the right inspector shows pag
 
 ## Posters, previews, and press export
 
+- Zooming and resizing use the preview already on screen. For a sharper preview at the current zoom, use **View → Render Again** (Ctrl+R).
 - **More → New poster from template** creates a poster with editable title, sections, and QR code. Use **Poster page settings** for orientation and safe margin, and **Place another figure** to include a live reference to another figure in the same project. Changing the page orientation does not reflow its contents automatically.
 - **View** includes the figure’s dark version and live color-vision simulations; these simulations do not recolor exports. The BioCartoon browser offers category/license filters, sort, preview and insertion. Attribution travels with inserted PNG/SVG assets; right-click the image to see or copy it. The browser does not submit artwork to the shared catalog.
 - **Export** includes JPEG and EPS as well as CMYK, outlined text, PDF bleed, and crop marks where supported. EPS and CMYK/outlined PDF require [Ghostscript](https://ghostscript.com/releases/gsdnld.html) on the rendering machine. Install it in the usual Windows location, add `gswin64c.exe` to `PATH`, or set `FIGNIMBLE_GHOSTSCRIPT` to its full path. Check your print shop’s requirements, especially color profiles.

@@ -27,7 +27,6 @@ public partial class MainWindow : Window
         this.settingsDirectory = settingsDirectory;
         InitializeComponent();
         SetupWorkspace();
-        SetupPreview();
         SetupArrangement();
         SetupCode();
         SetupDrawing();
@@ -56,7 +55,6 @@ public partial class MainWindow : Window
     {
         reloadTimer.Stop();
         thumbnailTimer.Stop();
-        previewTimer.Stop();
         SaveWindowFrame();
         SaveViewPreferences();
         StopProjectShells();
@@ -76,7 +74,6 @@ public partial class MainWindow : Window
     {
         engine?.Dispose();
         engine = null;
-        previewTimer.Stop();
         Page.ClearSpriteCache();
         var client = new EngineClient(python, remote, ssh);
         client.Notification += kind =>
@@ -89,7 +86,6 @@ public partial class MainWindow : Window
                 {
                     reloadTimer.Stop();
                     thumbnailTimer.Stop();
-                    previewTimer.Stop();
                     if (project is not null && client.Remote is { } target)
                         Status.Text = $"Disconnected from {target.Host}. Use SSH → Reconnect to reopen this project.";
                     return;
@@ -242,7 +238,7 @@ public partial class MainWindow : Window
         bool switching = name != shownFigure;
         double density = switching || !validFigure
             ? figureCards.FirstOrDefault(card => card.Name == name)?.PreviewDensity ?? InitialPreviewDensity
-            : PreviewDensityForView();
+            : force ? PreviewDensityForView() : CurrentPreviewDensity;
         try
         {
             var render = await engine!.CallAsync<FigureRender>("figure", new { name, dark = dark ?? darkPreview, force }, density);
@@ -264,7 +260,6 @@ public partial class MainWindow : Window
 
     private void ClearFigure()
     {
-        previewTimer.Stop();
         shownFigure = null;
         currentRender = null;
         validFigure = false;
