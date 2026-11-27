@@ -48,6 +48,29 @@ public partial class MainWindow
 
     private bool ConfirmDiscardDrafts() => ConfirmDiscardCode() && ConfirmDiscardCaption();
 
+    private bool ConfirmFigureSwitch()
+    {
+        if (!CodeDirty && !CaptionDirty) return true;
+        var dialog = new FormDialog(this, "Unsaved figure changes") { Width = 450 };
+        dialog.Note("Apply your changes before opening the selected figure?");
+        return dialog.ConfirmAsync("Apply and Switch", async () =>
+        {
+            if (CodeDirty && codePath is { } path)
+            {
+                string draft = NormalizeSource(SourceText.Text);
+                await ApplySource(path, codeOriginal, draft);
+                codeOriginal = draft;
+            }
+            if (CaptionDirty && shownFigure is { } figure)
+            {
+                string draft = NormalizeSource(CaptionText.Text);
+                await CallForCurrentFigure<EditResult>("edit", new { figure, op = "caption", expected = captionOriginal, text = draft });
+                captionOriginal = draft;
+            }
+            return null;
+        }, ("Discard and Switch", () => { }));
+    }
+
     private void SelectCodePicker()
     {
         syncingCode = true;

@@ -94,14 +94,14 @@ public partial class MainWindow
         }));
         var browse = new Button { Content = "Browse Server…" };
         dialog.Add("", browse);
-        browse.Click += async (_, _) =>
+        browse.Click += (_, _) =>
         {
             string target = host.Text.Trim();
             if (!ValidHost(target)) { MessageBox.Show(dialog, "Enter a valid SSH host or alias."); return; }
             browse.IsEnabled = false;
             try
             {
-                if (await ChooseRemotePath(dialog, target, path.Text.Trim(), folders: true, interactive: interactive.IsChecked == true) is { } selected)
+                if (ChooseRemotePath(dialog, target, path.Text.Trim(), folders: true, interactive: interactive.IsChecked == true) is { } selected)
                     path.Text = selected;
             }
             catch (Exception ex) { if (dialog.IsVisible) MessageBox.Show(dialog, ex.Message, "Could not list server directory"); }
@@ -171,7 +171,7 @@ public partial class MainWindow
         string target = host.Text.Trim();
         try
         {
-            if (await ChooseRemotePath(this, target, directory.Text.Trim(), folders: false,
+            if (ChooseRemotePath(this, target, directory.Text.Trim(), folders: false,
                 interactive: engine?.Remote is { Interactive: true } remote && remote.Host == target) is { } path && shownFigure == figure)
                 await ImportRemotePanel(target, path);
         }
@@ -189,31 +189,16 @@ public partial class MainWindow
         return host;
     }
 
-    private async Task<SshListing> ListRemotePath(string host, string path, InteractiveSshSession? ssh)
-    {
-        bool useCurrent = engine is { Running: true } &&
-            (ssh is null ? engine.Remote?.Interactive != true || engine.Remote.Host != host
-                : engine.Remote is { Interactive: true } remote && remote.Host == host && engine.Ssh == ssh);
-        using var temporary = useCurrent ? null : new EngineClient(ProjectPython(null), ssh: ssh);
-        var listing = await (temporary ?? engine!).CallAsync<SshListing>("remote_list", new { host, path });
-        if (!listing.Ok) throw new InvalidOperationException(listing.Error ?? "Could not list the SSH directory.");
-        return listing;
-    }
-
-    private async Task<string?> ChooseRemotePath(Window owner, string host, string path, bool folders, bool interactive = false)
+    private string? ChooseRemotePath(Window owner, string host, string path, bool folders, bool interactive = false)
     {
         SshListing? listing = null;
-        InteractiveSshSession? ssh = null;
-        await During("Listing server directory…", async () =>
-        {
-            if (interactive) ssh = await SignIn(owner, host);
-            listing = await ListRemotePath(host, path, ssh);
-        });
-        if (listing is null || !owner.IsVisible) return null;
+        EngineClient? helper = null;
         var dialog = new FormDialog(owner, folders ? "Browse for an SSH project" : "Browse for a remote Python panel") { Width = 520 };
         dialog.Note(folders ? "Open a folder to navigate. Use This Folder selects the current server directory."
             : "The selected script will run in the figure’s Python environment. Data dependencies are not copied.");
-        var location = dialog.Text("Server directory", listing.Path);
+        var location = dialog.Text("Server directory", path);
+        var listingStatus = new TextBlock { TextWrapping = TextWrapping.Wrap, Text = "Connecting…" };
+        dialog.Add("", listingStatus);
         var entries = new ListBox { Height = 245 };
         dialog.Add("Folders and Python files", entries);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
@@ -234,19 +219,52 @@ public partial class MainWindow
         {
             if (loading) return;
             loading = true;
+            listing = null;
+            entries.ItemsSource = null;
             entries.IsEnabled = buttons.IsEnabled = location.IsEnabled = false;
-            try { UpdateListing(await ListRemotePath(host, next, ssh)); }
-            catch (Exception ex) { if (dialog.IsVisible) MessageBox.Show(dialog, ex.Message, "Could not list server directory"); }
+            listingStatus.ClearValue(TextBlock.ForegroundProperty);
+            listingStatus.Text = "Listing server directory…";
+            try
+            {
+                var ssh = interactive ? await SignIn(dialog, host) : null;
+                if (!dialog.IsVisible) return;
+                if (helper is not null && (helper.Ssh != ssh || !helper.Running))
+                {
+                    helper.Dispose();
+                    helper = null;
+                }
+                helper ??= new EngineClient(ProjectPython(null), ssh: ssh);
+                var found = await helper.CallAsync<SshListing>("remote_list", new { host, path = next });
+                if (!found.Ok) throw new InvalidOperationException(found.Error ?? "Could not list the SSH directory.");
+                if (!dialog.IsVisible) return;
+                UpdateListing(found);
+                listingStatus.Text = "";
+            }
+            catch (Exception ex)
+            {
+                if (!dialog.IsVisible) return;
+                listingStatus.Text = ex.Message;
+                listingStatus.Foreground = System.Windows.Media.Brushes.Firebrick;
+            }
             finally { loading = false; entries.IsEnabled = buttons.IsEnabled = location.IsEnabled = true; }
         }
-        UpdateListing(listing);
+        dialog.Loaded += async (_, _) => await Go(path);
         go.Click += async (_, _) => await Go(location.Text.Trim());
-        up.Click += async (_, _) => await Go(Join(listing.Path, ".."));
-        open.Click += async (_, _) => { if (entries.SelectedItem is SshEntry { Dir: true } e) await Go(Join(listing.Path, e.Name)); };
-        entries.MouseDoubleClick += async (_, _) => { if (entries.SelectedItem is SshEntry { Dir: true } e) await Go(Join(listing.Path, e.Name)); };
-        if (!dialog.Confirm(folders ? "Use This Folder" : "Import Script", () => loading ? "Wait for the directory to load." :
-            !folders && entries.SelectedItem is not SshEntry { Dir: false } ? "Select a Python script." : null)) return null;
-        return folders ? listing.Path : Join(listing.Path, ((SshEntry)entries.SelectedItem).Name);
+        up.Click += async (_, _) => { if (listing is { } current) await Go(Join(current.Path, "..")); };
+        async Task OpenSelectedFolder()
+        {
+            if (listing is { } current && entries.SelectedItem is SshEntry { Dir: true } e) await Go(Join(current.Path, e.Name));
+        }
+        open.Click += async (_, _) => await OpenSelectedFolder();
+        entries.MouseDoubleClick += async (_, _) => await OpenSelectedFolder();
+        try
+        {
+            if (!dialog.Confirm(folders ? "Use This Folder" : "Import Script", () => loading ? "Wait for the directory to load." :
+                listing is null ? "List a directory before continuing." :
+                !folders && entries.SelectedItem is not SshEntry { Dir: false } ? "Select a Python script." : null) || listing is null) return null;
+            return folders ? listing.Path : Join(listing.Path, ((SshEntry)entries.SelectedItem).Name);
+        }
+        finally { helper?.Dispose(); }
     }
 
     private bool CanRefreshRemotePanel

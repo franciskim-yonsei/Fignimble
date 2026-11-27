@@ -189,8 +189,27 @@ public partial class MainWindow : Window
         Title = "Fignimble for Windows";
     }
 
-    private Task Reload() => project is null ? Task.CompletedTask :
-        During("Refreshing…", () => RefreshProject((Figures.SelectedItem as FigureCard)?.Name, external: true));
+    private Task Reload() => project is null || engine is not { Running: true } client ? Task.CompletedTask :
+        During("Refreshing…", async () =>
+        {
+            var updated = await client.CallAsync<ProjectState>("state");
+            if (client != engine) return;
+            string? preferred = (Figures.SelectedItem as FigureCard)?.Name ?? shownFigure;
+            ApplyProjectState(updated, preferred);
+            if (preferred == shownFigure && (CodeDirty || CaptionDirty) && (Figures.SelectedItem as FigureCard)?.Name != shownFigure)
+            {
+                RestoreFigureSelection();
+                Status.Text = "The current figure is no longer available. Your draft is still in the drawer.";
+                return;
+            }
+            if (Figures.SelectedItem is null)
+            {
+                ClearFigure();
+                Status.Text = "No Fignimble figures found in this folder.";
+                return;
+            }
+            await RenderSelectedFigure(external: true);
+        }, figureNavigation: true);
 
     private Task RenderAgain() => project is null ? Task.CompletedTask : During("Rendering again…", async () =>
     {
@@ -217,9 +236,14 @@ public partial class MainWindow : Window
     }
 
     private async Task ReadState(string? preferred, ProjectState? initialState = null)
+        => ApplyProjectState(initialState ?? await engine!.CallAsync<ProjectState>("state"), preferred);
+
+    private void ApplyProjectState(ProjectState updated, string? preferred)
     {
-        state = initialState ?? await engine!.CallAsync<ProjectState>("state");
-        SetFigureCards(state.Figures, preferred);
+        state = updated;
+        restoringFigure = true;
+        try { SetFigureCards(updated.Figures, preferred); }
+        finally { restoringFigure = false; }
         RefreshCodeFiles();
         RefreshHistory();
     }
@@ -233,20 +257,28 @@ public partial class MainWindow : Window
             return;
         }
         if (busy || engine is null || card.Name == shownFigure) return;
-        if (!ConfirmDiscardDrafts())
+        await During($"Opening {card.Name}…", () => RenderSelectedFigure(), figureNavigation: true);
+    }
+
+    private async Task RenderSelectedFigure(bool external = false)
+    {
+        // One render at a time, including file-watcher refreshes. An intervening click takes precedence.
+        bool draftsResolved = false;
+        while (engine is not null && Figures.SelectedItem is FigureCard selected)
         {
-            RestoreFigureSelection();
-            return;
-        }
-        await During($"Opening {card.Name}…", async () =>
-        {
-            // One render at a time. Pick up only the last selection made while it was running.
-            while (engine is not null && Figures.SelectedItem is FigureCard selected)
+            if (!draftsResolved && selected.Name != shownFigure)
             {
-                await RenderFigure(selected.Name, selection: selected);
-                if (Figures.SelectedItem == selected) break;
+                if (!ConfirmFigureSwitch())
+                {
+                    RestoreFigureSelection();
+                    Status.Text = shownFigure is null ? "Figure switch canceled." : $"Still showing {shownFigure}.";
+                    break;
+                }
+                draftsResolved = true;
             }
-        }, figureNavigation: true);
+            await RenderFigure(selected.Name, external, selection: selected);
+            if (Figures.SelectedItem == selected) break;
+        }
     }
 
     private void RestoreFigureSelection()

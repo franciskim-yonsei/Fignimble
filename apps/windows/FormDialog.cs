@@ -56,7 +56,7 @@ internal sealed class FormDialog : Window
 
     public bool Confirm(string action, Func<string?> validate) => ConfirmAsync(action, () => Task.FromResult(validate()));
 
-    public bool ConfirmAsync(string action, Func<Task<string?>> apply)
+    public bool ConfirmAsync(string action, Func<Task<string?>> apply, (string Label, Action Select)? alternative = null)
     {
         fields.Children.Add(error);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right,
@@ -76,6 +76,12 @@ internal sealed class FormDialog : Window
             finally { fields.IsEnabled = true; }
         };
         buttons.Children.Add(ok);
+        if (alternative is { } other)
+        {
+            var alternate = new Button { Content = other.Label, Padding = new Thickness(8, 4, 8, 4), Margin = new Thickness(6, 0, 0, 0) };
+            alternate.Click += (_, _) => { other.Select(); DialogResult = true; };
+            buttons.Children.Add(alternate);
+        }
         buttons.Children.Add(cancel);
         fields.Children.Add(buttons);
         return ShowDialog() == true;
