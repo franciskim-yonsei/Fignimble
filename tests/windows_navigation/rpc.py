@@ -45,7 +45,7 @@ for line in sys.stdin:
         if request["expected"] != path.read_text(encoding="utf-8") or request["check_syntax"] is not True:
             reply["error"] = "Source changed outside the editor."
         else:
-            path.write_text(request["text"], encoding="utf-8")
+            path.write_bytes(request["text"].encode("utf-8"))
             reply["result"] = {"ok": True}
     else:
         reply["error"] = f"Unexpected command: {command}"
