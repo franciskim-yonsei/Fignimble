@@ -100,17 +100,8 @@ public partial class MainWindow
         await RefreshProject(result.Name);
     });
 
-    private Task SetDarkPreview(bool value) => shownFigure is not { } figure ? Task.CompletedTask : During("Changing preview…", async () =>
-    {
-        await RenderDark(figure, value);
-    });
-
-    private async Task RenderDark(string figure, bool value)
-    {
-        var result = await engine!.CallAsync<FigureRender>("figure", new { name = figure, dark = value });
-        darkPreview = value;
-        ShowRender(result);
-    }
+    private Task SetDarkPreview(bool value) => shownFigure is not { } figure ? Task.CompletedTask :
+        During("Changing preview…", () => RenderFigure(figure, dark: value));
 
     private async Task BrowseIcons()
     {
@@ -204,7 +195,7 @@ public partial class MainWindow
                     aspect = (double)frame.PixelHeight / frame.PixelWidth;
                 }
                 double width = Math.Min(25, Math.Min(pageW, Math.Min(25, pageH) / aspect)), height = width * aspect;
-                var result = await engine!.CallAsync<EditResult>("import_file", new { figure = render.Figure, path,
+                var result = await CallForCurrentFigure<EditResult>("import_file", new { figure = render.Figure, path,
                     x = (pageW - width) / 2, y = (pageH - height) / 2, w = width, label = (string?)null });
                 ShowRender(result.Figure);
                 Page.SelectIds(result.Select ?? []);

@@ -182,7 +182,7 @@ public partial class MainWindow
         Page.SelectedIds.Count == 0 ? Task.CompletedTask : During(cut ? "Cutting selected layers…" : "Copying selected layers…", async () =>
         {
             var oids = Page.SelectedIds.ToArray();
-            var result = await engine!.CallAsync<CopiedCode>("copy", new { figure, oids });
+            var result = await CallForCurrentFigure<CopiedCode>("copy", new { figure, oids });
             if (result.Code.Length == 0 || cut && result.Code.Length != oids.Length)
             { Status.Text = "Some selected layers could not be copied as editable code."; return; }
             // The system clipboard only holds a marker. It cannot inject code into a project.
@@ -193,7 +193,7 @@ public partial class MainWindow
             copiedLayers = (folder, result.Code, token);
             if (cut)
             {
-                var deleted = await engine.CallAsync<EditResult>("edit", new { figure, op = "delete", oids });
+                var deleted = await CallForCurrentFigure<EditResult>("edit", new { figure, op = "delete", oids });
                 Page.Select(null);
                 ShowRender(deleted.Figure);
                 await ReadState(figure);
@@ -224,7 +224,7 @@ public partial class MainWindow
     private Task PasteLayers() => !validFigure || shownFigure is not { } figure || !CanPasteLayers() ? Task.CompletedTask :
         During("Pasting editable layers…", async () =>
         {
-            var result = await engine!.CallAsync<EditResult>("paste", new { figure, code = copiedLayers!.Value.Code, dx = 3, dy = 3 });
+            var result = await CallForCurrentFigure<EditResult>("paste", new { figure, code = copiedLayers!.Value.Code, dx = 3, dy = 3 });
             ShowRender(result.Figure);
             Page.SelectIds(result.Select ?? []);
             await ReadState(figure);
@@ -241,7 +241,7 @@ public partial class MainWindow
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(bitmap));
                 using (var stream = File.Create(path)) encoder.Save(stream);
-                var result = await engine!.CallAsync<EditResult>("paste_image", new { figure = render.Figure, path, x = box.X, y = box.Y, w = box.Width });
+                var result = await CallForCurrentFigure<EditResult>("paste_image", new { figure = render.Figure, path, x = box.X, y = box.Y, w = box.Width });
                 ShowRender(result.Figure);
                 Page.SelectIds(result.Select ?? []);
                 await ReadState(render.Figure);

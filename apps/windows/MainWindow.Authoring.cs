@@ -124,7 +124,7 @@ public partial class MainWindow
                 double x = Math.Round(position.X + i * 5, 2), y = Math.Round(position.Y + i * 5, 2);
                 try
                 {
-                    var result = await engine!.CallAsync<EditResult>("import_file", new { figure, path, x, y });
+                    var result = await CallForCurrentFigure<EditResult>("import_file", new { figure, path, x, y });
                     ShowRender(result.Figure);
                     Page.SelectIds(result.Select ?? []);
                 }
@@ -140,7 +140,7 @@ public partial class MainWindow
         if (!validFigure || currentRender is not { } render) return Task.CompletedTask;
         return During(status, async () =>
         {
-            var result = await engine!.CallAsync<EditResult>(command, args(render.Figure, FindPlacement(render)));
+            var result = await CallForCurrentFigure<EditResult>(command, args(render.Figure, FindPlacement(render)));
             ShowRender(result.Figure);
             Page.Select(result.Select?.FirstOrDefault());
             await ReadState(render.Figure);

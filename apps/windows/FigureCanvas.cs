@@ -10,13 +10,19 @@ public sealed partial class FigureCanvas : FrameworkElement
 {
     // The viewbox fits this surface to the window. All geometry and pointer deltas here are in millimeters.
     private readonly Dictionary<string, BitmapSource> images = new(StringComparer.OrdinalIgnoreCase);
+    // Keep the displayed sprites and up to 256 MiB of decoded pixels from recently viewed figures.
+    private const long RecentImageBudget = 256L * 1024 * 1024;
+    private sealed record CachedSprite(string File, BitmapSource Image, long Bytes);
+    private readonly LinkedList<CachedSprite> recentImages = new();
+    private readonly Dictionary<string, LinkedListNode<CachedSprite>> recentImageIndex = new(StringComparer.OrdinalIgnoreCase);
+    private long recentImageBytes;
     private FigureRender? figure;
     internal int VisionMode { get; private set; } = -1;
     internal void SetVision(int mode)
     {
         if (VisionMode == mode) return;
         VisionMode = mode;
-        images.Clear();
+        ClearSpriteCache();
         InvalidateVisual();
     }
     private string[] selected = [];
@@ -60,7 +66,8 @@ public sealed partial class FigureCanvas : FrameworkElement
     internal event Action<FigureElement, int, int>? TableCellRequested;
     internal bool IsDragging => start.HasValue || IsDrawingTool;
     internal IReadOnlyList<string> SelectedIds => selected;
-    internal FigureElement[] Selections => (figure?.Elements ?? []).Concat(figure?.Labels ?? []).Where(e => selected.Contains(e.Oid)).ToArray();
+    internal FigureElement[] Selections => selected.Length == 0 ? [] :
+        (figure?.Elements ?? []).Concat(figure?.Labels ?? []).Where(e => selected.Contains(e.Oid)).ToArray();
     internal FigureElement? Selection => selected.Length == 1 ? Selections.FirstOrDefault() : null;
 
     internal void Select(string? oid) => SelectIds(oid is null ? [] : [oid]);
@@ -104,15 +111,53 @@ public sealed partial class FigureCanvas : FrameworkElement
         SelectionChanged?.Invoke();
     }
 
-    internal void ShowFigure(FigureRender? render, bool keepSelection)
+    internal void ShowFigure(FigureRender? render, bool keepSelection, bool keepSprites = false)
     {
         if (!keepSelection) SetTool(CanvasTool.Select);
         figure = render;
         SelectIds(keepSelection ? selected : []);
-        images.Clear();
+        if (!keepSprites) UpdateSpriteCache(render);
         Width = render?.Size?[0] ?? 1;
         Height = render?.Size?[1] ?? 1;
         InvalidateVisual();
+    }
+
+    internal void ClearSpriteCache()
+    {
+        images.Clear();
+        recentImages.Clear();
+        recentImageIndex.Clear();
+        recentImageBytes = 0;
+    }
+
+    private void UpdateSpriteCache(FigureRender? render)
+    {
+        // The engine keys sprite filenames by rendering inputs, so unchanged layers can share decoded pixels.
+        var used = (render?.Elements ?? []).Concat(render?.Labels ?? [])
+            .Select(layer => layer.Sprite?.File).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Reclaim the incoming figure's sprites before evicting anything from the outgoing figure.
+        foreach (string file in used)
+        {
+            if (!recentImageIndex.Remove(file, out var node)) continue;
+            recentImages.Remove(node);
+            recentImageBytes -= node.Value.Bytes;
+            images.Add(file, node.Value.Image);
+        }
+        foreach (string file in images.Keys.Where(file => !used.Contains(file)).ToArray())
+        {
+            var image = images[file];
+            images.Remove(file);
+            long bytes = 4L * image.PixelWidth * image.PixelHeight;
+            if (bytes > RecentImageBudget) continue;
+            recentImageIndex.Add(file, recentImages.AddLast(new CachedSprite(file, image, bytes)));
+            recentImageBytes += bytes;
+        }
+        while (recentImageBytes > RecentImageBudget && recentImages.First is { } oldest)
+        {
+            recentImages.RemoveFirst();
+            recentImageIndex.Remove(oldest.Value.File);
+            recentImageBytes -= oldest.Value.Bytes;
+        }
     }
 
     internal static bool TopLevel(FigureElement e) => e.Parent is null;
@@ -143,19 +188,20 @@ public sealed partial class FigureCanvas : FrameworkElement
         if (figure.Background is null) bg = TransparencyBrush;
         dc.DrawRectangle(bg, null, page);
         DrawGrid(dc);
-        var moved = start.HasValue && !marquee && !resizing && endpoint is null && pathPoint is null && canvasGuide is null && dividerDrag is null
-            ? Selections.Select(e => e.Parent ?? e.Oid).ToHashSet() : [];
+        bool dragging = start.HasValue && !marquee && !resizing && endpoint is null && canvasGuide is null && dividerDrag is null;
+        var moved = dragging && pathPoint is null ? Selections.Select(e => e.Parent ?? e.Oid).ToHashSet() : [];
+        HashSet<string>? movedChildren = moved.Count > 0 ? [] : null;
         foreach (var e in figure.Elements ?? [])
         {
-            bool moving = moved.Contains(e.Oid) || e.Parent is { } id && moved.Contains(id);
-            Vector shift = moving ? delta : default;
-            DrawSprite(dc, e.Sprite, shift);
+            bool parentMoved = movedChildren is not null && e.Parent is { } parent && moved.Contains(parent);
+            if (parentMoved) movedChildren!.Add(e.Oid);
+            DrawSprite(dc, e.Sprite, parentMoved || moved.Contains(e.Oid) ? delta : default);
         }
         foreach (var label in figure.Labels ?? [])
         {
-            bool moves = moveAllLabels && !label.Detached || moved.Contains(label.Oid) || !label.Detached && label.Panel is { } id &&
-                (moved.Contains(id) || figure.Elements?.FirstOrDefault(l => l.Oid == id)?.Parent is { } parentLayout && moved.Contains(parentLayout));
-            DrawSprite(dc, label.Sprite, start.HasValue && moves && !marquee && !resizing && endpoint is null && canvasGuide is null && dividerDrag is null ? delta : default);
+            bool moves = dragging && (moved.Contains(label.Oid) || !label.Detached &&
+                (moveAllLabels || label.Panel is { } id && (moved.Contains(id) || movedChildren?.Contains(id) == true)));
+            DrawSprite(dc, label.Sprite, moves ? delta : default);
         }
         foreach (var active in Selections.Where(e => HasBox(e) && e.Props is not { Hidden: true }))
         {

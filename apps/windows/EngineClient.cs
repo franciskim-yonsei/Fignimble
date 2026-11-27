@@ -135,7 +135,7 @@ internal sealed class EngineClient : IDisposable
     }
 
     // Serialize the outgoing lines; a background thumbnail refresh may overlap a foreground command.
-    public async Task<T> CallAsync<T>(string command, object? arguments = null)
+    public async Task<T> CallAsync<T>(string command, object? arguments = null, double? pxPerMM = null)
     {
         int id = Interlocked.Increment(ref nextId);
         var request = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -147,6 +147,7 @@ internal sealed class EngineClient : IDisposable
             if (arguments is not null)
                 foreach (var field in JsonSerializer.SerializeToElement(arguments, Json).EnumerateObject())
                     message.Add(field.Name, field.Value);
+            if (pxPerMM is { } density) message.Add("pxPerMM", density);
             await sendGate.WaitAsync();
             try
             {
@@ -187,7 +188,8 @@ internal sealed record ProjectState(FigureEntry[] Figures, bool CanUndo, bool Ca
 internal sealed record FigureEntry(string Name, string? Thumb, string? Error, int Warnings);
 internal sealed record FigureRender(string Figure, string File, double[]? Size, string? Background,
     FigureElement[]? Elements, FigureElement[]? Labels, FigureWarning[]? Warnings, string? Error, RenderJournal? Journal,
-    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle, RenderPoster? Poster, string? Thumb);
+    FigureGuide[]? Guides, FigureCaption? Caption, FigureStyle? Style, FigureStyle? LabelStyle, RenderPoster? Poster, string? Thumb,
+    double? PxPerMM);
 internal sealed record RenderPoster(string Key, bool Landscape, double? Margin);
 internal sealed record FigureStyle(Dictionary<string, JsonElement> Props);
 internal sealed record FigureGuide(double? X, double? Y);

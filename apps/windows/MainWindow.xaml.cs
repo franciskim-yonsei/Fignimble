@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         this.settingsDirectory = settingsDirectory;
         InitializeComponent();
         SetupWorkspace();
+        SetupPreview();
         SetupArrangement();
         SetupCode();
         SetupDrawing();
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
     {
         reloadTimer.Stop();
         thumbnailTimer.Stop();
+        previewTimer.Stop();
         SaveWindowFrame();
         SaveViewPreferences();
         StopProjectShells();
@@ -73,6 +75,8 @@ public partial class MainWindow : Window
     {
         engine?.Dispose();
         engine = null;
+        previewTimer.Stop();
+        Page.ClearSpriteCache();
         var client = new EngineClient(python, remote);
         client.Notification += kind =>
         {
@@ -84,6 +88,7 @@ public partial class MainWindow : Window
                 {
                     reloadTimer.Stop();
                     thumbnailTimer.Stop();
+                    previewTimer.Stop();
                     if (project is not null && client.Remote is { } target)
                         Status.Text = $"Disconnected from {target.Host}. Use SSH → Reconnect to reopen this project.";
                     return;
@@ -178,6 +183,7 @@ public partial class MainWindow : Window
         Figures.ItemsSource = null;
         figureCards.Clear();
         RefreshFigureEmpty();
+        Page.ClearSpriteCache();
         ClearFigure();
         Title = "Fignimble for Windows";
     }
@@ -230,18 +236,34 @@ public partial class MainWindow : Window
         await During($"Rendering {card.Name}…", () => RenderFigure(card.Name));
     }
 
-    private async Task RenderFigure(string name, bool external = false, bool force = false)
+    private async Task RenderFigure(string name, bool external = false, bool force = false, bool? dark = null)
     {
-        if (name != shownFigure) ClearFigure();
-        ShowRender(await engine!.CallAsync<FigureRender>("figure", new { name, dark = darkPreview, force }), external);
+        bool switching = name != shownFigure;
+        double density = switching || !validFigure
+            ? figureCards.FirstOrDefault(card => card.Name == name)?.PreviewDensity ?? InitialPreviewDensity
+            : PreviewDensityForView();
+        if (switching) ClearFigure(keepSprites: true);
+        try
+        {
+            var render = await engine!.CallAsync<FigureRender>("figure", new { name, dark = dark ?? darkPreview, force }, density);
+            if (dark is { } value) darkPreview = value;
+            if (force) Page.ClearSpriteCache();
+            ShowRender(render, external);
+        }
+        catch
+        {
+            if (switching && shownFigure is null) Page.ShowFigure(null, false);
+            throw;
+        }
     }
 
-    private void ClearFigure()
+    private void ClearFigure(bool keepSprites = false)
     {
+        previewTimer.Stop();
         shownFigure = null;
         currentRender = null;
         validFigure = false;
-        Page.ShowFigure(null, false);
+        Page.ShowFigure(null, false, keepSprites);
         RefreshLayers();
         PageView.Visibility = Visibility.Collapsed;
         ScheduleRulers();
@@ -272,7 +294,8 @@ public partial class MainWindow : Window
         EmptyCanvasCard.Visibility = validFigure ? Visibility.Collapsed : Visibility.Visible;
         EmptyCanvas.Text = validFigure ? "" : "The figure could not be rendered. See the status below.";
         CanvasSize.Text = validFigure ? $"{render.Size![0]:g} × {render.Size[1]:g} mm" : "";
-        UpdateFigureCard(render.Figure, render.Thumb, render.Error, render.Warnings?.Count(w => w.Level != "info") ?? 0);
+        UpdateFigureCard(render.Figure, render.Thumb, render.Error, render.Warnings?.Count(w => w.Level != "info") ?? 0,
+            validFigure ? render.PxPerMM : null);
         RefreshCode(render, source);
         RefreshCaption(render);
         SyncGeometry();
@@ -295,7 +318,7 @@ public partial class MainWindow : Window
 
     private Task EditFigure(string figure, object args, string status, bool clearSelection = false) => During(status, async () =>
     {
-        var result = await engine!.CallAsync<EditResult>("edit", args);
+        var result = await CallForCurrentFigure<EditResult>("edit", args);
         if (clearSelection && !result.Unchanged) Page.Select(null);
         ShowRender(result.Figure);
         if (result.Select is { Length: > 0 }) Page.SelectIds(result.Select);

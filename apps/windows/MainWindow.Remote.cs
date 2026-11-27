@@ -244,7 +244,7 @@ public partial class MainWindow
             return Task.CompletedTask;
         return During("Fetching updated panel…", async () =>
         {
-            var result = await engine!.CallAsync<EditResult>("update_remote", new { figure, file });
+            var result = await CallForCurrentFigure<EditResult>("update_remote", new { figure, file });
             ShowRender(result.Figure);
             await ReadState(figure);
         });

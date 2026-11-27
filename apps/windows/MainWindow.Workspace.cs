@@ -28,6 +28,7 @@ public partial class MainWindow
         private string? thumb;
         private DateTime stamp;
         public string Name { get; } = name;
+        public double? PreviewDensity { get; set; }
         public BitmapSource? Preview { get; private set; }
         public string Indicator { get; private set; } = "";
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -96,8 +97,12 @@ public partial class MainWindow
         RefreshFigureEmpty();
     }
 
-    private void UpdateFigureCard(string name, string? thumb, string? error, int warnings) =>
-        figureCards.FirstOrDefault(f => f.Name == name)?.Update(thumb, error, warnings);
+    private void UpdateFigureCard(string name, string? thumb, string? error, int warnings, double? density = null)
+    {
+        if (figureCards.FirstOrDefault(f => f.Name == name) is not { } card) return;
+        if (density is > 0) card.PreviewDensity = density;
+        card.Update(thumb, error, warnings);
+    }
 
     private void RefreshFigureEmpty()
     {
