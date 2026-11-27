@@ -86,11 +86,12 @@ final class Engine {
             && !fm.fileExists(atPath: "/Applications/Xcode.app/Contents/Developer/usr/bin/python3")
     }
 
-    /// What the renderer needs: matplotlib for panels and text, PyMuPDF to compose, Pillow for pictures.
+    /// What the renderer needs: Python 3.10 or later, matplotlib for panels and text, PyMuPDF to compose, Pillow for
+    /// pictures and numpy.
     static func canImportEngineNeeds(_ python: String) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: python)
-        p.arguments = ["-c", "import matplotlib, pymupdf, PIL"]
+        p.arguments = ["-c", "import sys; assert sys.version_info >= (3, 10); import matplotlib, pymupdf, PIL, numpy"]
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return false }
         let deadline = Date().addingTimeInterval(25)
@@ -121,6 +122,7 @@ final class Engine {
         env["FIGNIMBLE_PYTHON"] = python
         env["MPLBACKEND"] = "Agg"
         env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONDONTWRITEBYTECODE"] = "1"   // no __pycache__ in the signed app bundle
         // ssh to servers through the connection the app logged in with (SSHLogin.swift)
         SSH.makeControlDir()
         env["FIGNIMBLE_SSH_SHARE"] = SSH.controlDir

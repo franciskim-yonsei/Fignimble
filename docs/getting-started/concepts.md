@@ -2,8 +2,13 @@
 
 ## A project is a folder
 
+By convention it is called `fignimble`, inside the paper's folder or repository (`mypaper/fignimble/`), and it is
+marked by a `fignimble.toml` at its top, so that anyone looking at the folder sees that its figures are made with
+Fignimble:
+
 ```text
-myfigures/
+mypaper/fignimble/
+├── fignimble.toml      marks the project, and the Fignimble version it was made with
 ├── style.py            the look every figure shares
 ├── fig1.py             a figure file
 ├── fig2.py
@@ -15,6 +20,12 @@ myfigures/
 ├── requirements.txt    packages the panels need (optional)
 └── .fignimble/         renders and caches (safe to delete; git-ignored)
 ```
+
+**`fignimble.toml`** says the folder is a Fignimble project and which version of Fignimble made it. Fignimble and
+the `fignimble` command find the project from any folder inside it by looking for it, as git looks for `.git`:
+opening `panels/` opens the project, and `fignimble check` run in `panels/` checks the project's figures. New
+projects get one; when you open a folder of figures made before projects had one, Fignimble offers to add it. When it
+names a newer Fignimble than yours, Fignimble says so.
 
 **Figure files** are the top-level `.py` files that make a `Figure`. **Panel files** have a function
 `draw(fig, ...)`; one file can hold several (`function="bars"`). **`style.py`** holds the `Style` every figure
@@ -63,3 +74,24 @@ See [posters](../guide/posters.md).
 Fignimble keeps each panel's drawing in `.fignimble/` and draws a panel again only when its code, its data, its size
 or the style changes. For slow work that several panels share, like loading data or fitting a model, decorate a
 function with [`@cached`](../guide/panels.md#sharing-slow-work-between-panels).
+
+## Files outside the project
+
+A figure can use a picture or panel code that lives elsewhere, such as a plot your analysis writes or the functions
+your notebook imports, without copying it in:
+
+```python
+fig.image("../analysis/out/umap.png", x=4, y=3, w=60)                         # rewritten by the analysis
+fig.panel("../analysis/plots.py", x=70, y=3, w=60, h=50, function="umap")     # draws into the fig it's given
+```
+
+Fignimble watches those files too, and the modules that code imports from its own folder. When one changes, the
+figure is drawn again, as it is for the project's own files. Two things to keep in mind:
+
+- Panel code runs with the project as its working directory, so code kept elsewhere should find its data from its
+  own location (`Path(__file__).parent / "data.csv"`).
+- Retyping or recoloring on the canvas edits the code where the text or color is written, even outside the project.
+  Keep the project and the analysis in one repository, side by side, so that a clone has both.
+
+(Inserting a picture from the Insert menu, or dragging one in, copies it into `images/`; write its path in the code
+to keep using the file where it is.)

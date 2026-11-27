@@ -12,4 +12,5 @@ if [ -d "$HERE/../engine/fignimble" ]; then ENGINE="$HERE/../engine"; else ENGIN
 for py in "${FIGNIMBLE_PYTHON:-}" "$HOME/Library/Application Support/Fignimble/python/bin/python" "$HERE/../.venv/bin/python" "$(command -v python3)"; do
   if [ -n "$py" ] && [ -x "$py" ]; then PY="$py"; break; fi
 done
-PYTHONPATH="$ENGINE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m fignimble.cli "$@"
+# no __pycache__ in the app bundle, whose signature would then fail
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$ENGINE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m fignimble.cli "$@"

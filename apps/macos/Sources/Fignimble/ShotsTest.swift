@@ -26,12 +26,78 @@ extension MainController {
         }
     }
 
+    /// An engine that stops at once (issue #8): what the window shows, and whether its alert's first button
+    /// closes it: FIGNIMBLE_SHOTS_SCENE=enginestop, into enginestop.txt.
+    func engineStopReport(_ dir: String) async {
+        var s = ""
+        func note() {
+            s += "sheet \(window.attachedSheet.map { "\(type(of: $0)) visible \($0.isVisible)" } ?? "none")"
+            s += " modal \(NSApp.modalWindow.map { "\(type(of: $0))" } ?? "none")"
+            s += " windows \(NSApp.windows.filter(\.isVisible).map { "\(type(of: $0)) \($0.title)" })\n"
+        }
+        // the choice of a Python, offered again, runs modally, and tasks wait while it shows: a timer that fires then
+        let modalCheck = Timer(timeInterval: 4, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let modal = NSApp.modalWindow else { return }
+                let views = modal.contentView.map { self.allSubviews($0) } ?? []
+                let texts = views.compactMap { ($0 as? NSTextField)?.stringValue }.filter { !$0.isEmpty }
+                var r = "modal text \(texts.map { String($0.prefix(160)) })\n"
+                r += "modal buttons \(views.compactMap { ($0 as? NSButton)?.title })\n"
+                r += "saved python \(UserDefaults.standard.string(forKey: "python") ?? "none")\n"
+                try? r.write(toFile: dir + "/enginestop.txt", atomically: true, encoding: .utf8)
+                NSApp.abortModal()                          // as Quit there
+            }
+        }
+        RunLoop.main.add(modalCheck, forMode: .modalPanel)
+        try? await Task.sleep(nanoseconds: 4_500_000_000)
+        note()
+        if let sheet = window.attachedSheet {
+            let buttons = sheet.contentView.map { allSubviews($0) }?.compactMap { $0 as? NSButton } ?? []
+            s += "buttons \(buttons.map(\.title))\n"
+            buttons.first { $0.title == "OK" }?.performClick(nil)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            note()
+        }
+        try? s.write(toFile: dir + "/enginestop.txt", atomically: true, encoding: .utf8)
+        NSApp.terminate(nil)
+    }
+
+    private func allSubviews(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap { allSubviews($0) } }
+
+    /// The sidebar's right-click menu on a figure: copy, paste (a <name>_copy shown), delete (the one next to it
+    /// shown), undo (back): FIGNIMBLE_SHOTS_SCENE=figmenu, into figmenu.txt.
+    func figureMenuTest(_ dir: String) async {
+        for _ in 0..<300 where figure == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+        let names = { self.figures.compactMap { $0["name"] as? String } }
+        var s = "start \(names()) current \(current ?? "-")\n"
+        let first = names().first ?? ""
+        let m = figureListMenu(first)
+        s += "menu \(m.items.map(\.title)) enabled \(m.items.filter(\.isEnabled).map(\.title))\n"
+        func fire(_ t: String) { if let i = m.items.first(where: { $0.title == t }), let a = i.action { NSApp.sendAction(a, to: i.target, from: i) } }
+        fire("Copy"); await waitForQueue()
+        let m2 = figureListMenu(first)
+        s += "paste enabled \(m2.items.first { $0.title == "Paste" }?.isEnabled ?? false)\n"
+        fire("Paste"); await waitForQueue(); await waitForQueue()
+        s += "pasted \(names()) current \(current ?? "-")\n"
+        let copy = current ?? ""
+        let m3 = figureListMenu(copy)
+        if let i = m3.items.first(where: { $0.title == "Delete" }) { NSApp.sendAction(i.action!, to: i.target, from: i) }
+        await waitForQueue(); await waitForQueue()
+        s += "deleted \(names()) current \(current ?? "-")\n"
+        undoEdit(nil); await waitForQueue()
+        s += "undone \(names())\n"
+        try? s.write(toFile: dir + "/figmenu.txt", atomically: true, encoding: .utf8)
+        NSApp.terminate(nil)
+    }
+
     func runShotsIfAsked() {
         guard let dir = ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS"] else { return }
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         Task { @MainActor in
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "blank" { await blankShots(dir); return }
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "window" { windowReport(dir); return }
+            if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "enginestop" { await engineStopReport(dir); return }
+            if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "figmenu" { await figureMenuTest(dir); return }
             if ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS_SCENE"] == "remote" { await remoteShots(dir); return }
             // with FIGNIMBLE_TEST_SETUP the Python is set up first, which takes a while
             let wait = ProcessInfo.processInfo.environment["FIGNIMBLE_TEST_SETUP"] != nil ? 3000 : 300
@@ -711,8 +777,31 @@ extension MainController {
             }
         }
         await settle(); await settle(); shot(dir, "V4-table")
-        log("cells now=\(figure?.elements.first?.tableCells ?? [])")
+        log("cells now=\(figure?.elements.first(where: { $0.kind == "table" })?.tableCells ?? [])")
         log("table figure=\(figure?.isTableFigure ?? false) size=\(figure?.size ?? .zero)")
+        // a table embedded in a figure (Insert ▸ Table…): a grid of cells, typed into on the figure
+        await loadFigure("fig1"); await settle()
+        let e = try? await engine.json("insert_table", ["figure": "fig1", "rows": 3, "cols": 3, "x": 120, "y": 70, "pxPerMM": lastPx])
+        if let fig = e?["figure"] as? [String: Any] { apply(fig) }
+        await settle()
+        if let t = figure?.elements.last(where: { $0.kind == "table" }) {
+            canvas.selection = [t.oid]
+            await settle()
+            if let b = t.tableCellBox(0, 0) {
+                let c = CGPoint(x: b.midX, y: b.midY)
+                mouse(.leftMouseDown, c); mouse(.leftMouseUp, c)
+                mouse(.leftMouseDown, c, clicks: 2); mouse(.leftMouseUp, c, clicks: 2)
+                for word in ["Gene", "n", "p", "CD3E", "12", "0.01"] {
+                    if let ed = window.firstResponder as? NSTextView {
+                        ed.string = word
+                        ed.doCommand(by: #selector(NSResponder.insertTab(_:)))
+                    } else { log("no cell editor") }
+                }
+                window.makeFirstResponder(canvas)
+            }
+        }
+        await settle(); await settle(); shot(dir, "V5-embedded-table")
+        log("embedded cells=\(figure?.elements.last(where: { $0.kind == "table" })?.tableCells ?? [])")
         NSApp.terminate(nil)
     }
 

@@ -39,11 +39,13 @@ import time
 from concurrent.futures import Future
 from pathlib import Path
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 from . import mirror, remote
 
 PACKAGE = Path(__file__).resolve().parent
 # answered from what the engine already has: no project files change, so nothing to fetch afterwards
-READ_ONLY = {"state", "figure", "journals", "requirements", "copy", "export", "export_table", "remote_hosts",
+READ_ONLY = {"state", "figure", "journals", "requirements", "copy", "export", "export_table", "export_source_data", "remote_hosts",
              "remote_list", "manifest", "read_files"}
 BATCH = 16 * 1024 * 1024                         # bytes of files fetched per request
 NEEDS_ENGINE, NEEDS_PACKAGES = 97, 98
@@ -281,7 +283,7 @@ class Tunnel:
                 if res is not None and self.R:
                     if cmd == "open" or cmd not in READ_ONLY:
                         self.pull()
-                    if cmd in ("export", "export_table") and ctx and isinstance(res, dict) and res.get("path"):
+                    if cmd in ("export", "export_table", "export_source_data") and ctx and isinstance(res, dict) and res.get("path"):
                         got = self.call("read_files", paths=[res["path"]])["files"].get(res["path"])
                         if got:
                             _write_atomic(Path(ctx), base64.b64decode(got["data"]))
@@ -439,7 +441,7 @@ class Tunnel:
             if cmd in ("import_file", "paste_image") or (cmd == "edit" and req.get("op") == "replace_source"):
                 if self.local_path(req.get("path")) and os.path.isfile(req["path"]):
                     req["path"] = self.upload(req["path"])
-            elif cmd in ("export", "export_table"):
+            elif cmd in ("export", "export_table", "export_source_data"):
                 ctx = req["path"]                       # where the app wants it
                 req["path"] = self.call("staging_path", name=Path(ctx).name)["path"]
             elif cmd in ("import_remote", "update_remote"):

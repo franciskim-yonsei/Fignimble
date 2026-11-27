@@ -545,7 +545,7 @@ class Figure:
         if style is None:
             style = Style.journal(journal) if journal else Style()
             style.site = None                       # made here, not in the user's code
-        self.props = dict(width=width, height=height, background=background, journal=journal or style.journal,
+        self.props = dict(width=width, height=height, background=background, journal=journal or style.props.get("journal"),
                           columns=columns, poster=poster.lower() if poster else None, landscape=landscape,
                           margin=margin)
         self.style = style
@@ -665,15 +665,18 @@ class Figure:
               align=None, font: str | None = None, color: str = "#000000", grid: bool = False,
               group: str | None = None, name: str | None = None, locked: bool = False,
               hidden: bool = False) -> Element:
-        """A table from a .csv, .tsv or .txt file (`source`, relative to the project) or from `rows` ([["Gene",
+        """A table from a .csv, .tsv or .txt file (`source`, relative to the project), a function returning its
+        rows or a pandas DataFrame (`source=load_genes`), or from `rows` ([["Gene",
         "n"], ["CD3E", 12], ...]). (x, y) is its top-left; `w` (mm) widens it (it is never narrower than its text).
         The first row is the header (`header=False`: none). `decimals` rounds numbers with decimals (2, or
         [None, 0, 2, 3] per column); `align` is "lrr"
         (left/center/right per column), else numbers go right and words left. Size in pt; default the style's.
         Rules above and below the header and at the bottom, as in a printed paper; `grid=True` draws a line between
         every row and column and around the table instead (in `color`). Journals want tables as text:
-        the editor's Export Table as Word (and `fignimble table`) writes it as a .docx."""
-        return self._add("table", "table", dict(source=None if source is None else str(source), x=x, y=y, w=w,
+        the editor's Export Table as Word (and `fignimble table`) writes it as a .docx. A table of the paper (Table 1)
+        goes in a file of its own: see Table."""
+        return self._add("table", "table", dict(source=source if source is None or callable(source) else str(source),
+                                                x=x, y=y, w=w,
                                                 rows=None if rows is None else [list(r) for r in rows],
                                                 header=header, size=size, decimals=decimals, align=align, font=font,
                                                 color=color, grid=grid, group=group, name=name, locked=locked,
@@ -765,12 +768,14 @@ class Figure:
         e.source, e.target = source, target
         return e
 
-    def scalebar(self, image, length: float, unit: str = "µm", pixel_size: float = 1.0, corner: str = "lower right",
+    def scalebar(self, image, length: float, unit: str = "µm", pixel_size: float | None = None, corner: str = "lower right",
                  x: float | None = None, y: float | None = None, margin: float = 1.5, color: str = "#FFFFFF",
                  thickness: float = 0.6, size: float | None = None, label: bool = True, group: str | None = None,
                  name: str | None = None, locked: bool = False, hidden: bool = False) -> Element:
         """A scale bar on a picture: `length` in `unit`, where one pixel of the original picture is `pixel_size`
-        units (e.g. 0.325 µm). It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
+        units (e.g. 0.325 µm). Without `pixel_size`, it comes from the picture's metadata (OME-TIFF, ImageJ TIFF, or
+        a TIFF, PNG or JPEG resolution of microscope pixels); preflight warns when there is none, and when a given
+        `pixel_size` disagrees with the metadata. `unit` is µm, nm, mm, cm, m or Å for the metadata to apply. It sits in `corner` ("lower right", "lower left", "upper right", "upper left"),
         `margin` mm in, or at (x, y), fractions of the picture's box for the bar's left end. `thickness` in mm."""
         e = self._add("scalebar", "scalebar", dict(length=length, unit=unit, pixel_size=pixel_size, corner=corner,
                                                     x=x, y=y, margin=margin, color=color, thickness=thickness,
@@ -835,3 +840,57 @@ class Figure:
     def guide(self, x: float | None = None, y: float | None = None):
         """A guide line at x (vertical) or y (horizontal), in mm, for the editor's snapping."""
         self.guides.append({"x": x, "y": y, "site": _site()})
+
+
+class Table(Figure):
+    """A table of the paper (Table 1, Supplementary Table 2), in a file of its own, as a figure is:
+
+        from fignimble import *
+        from style import STYLE
+
+        tab = Table("tables/genes.csv", style=STYLE, title="Differentially expressed genes",
+                    decimals=[None, 0, 2, 3], notes="FDR, Benjamini-Hochberg.")
+
+    Tables are numbered apart from figures, have no panel letters, and go to the journal as text: they export as
+    Word (.docx, with the title above and the notes below), Excel, CSV or TSV, and also as PDF, PNG or PowerPoint
+    for slides. A figure or poster can show one with fig.figure("table1.py", ...).
+
+    source    a .csv, .tsv or .txt file of the project, or a function that returns the rows (a list of lists, the
+              header first) or a pandas DataFrame; it runs at every render, so put slow work under @cached
+    rows      the cells written in the code instead of `source`
+    title     the table's title, above it (bold)
+    notes     what goes under it: footnotes, abbreviations, the test used (a str; "\\n" separates lines, or a list)
+    header, decimals, align, grid, size, font, color   as in Figure.table
+    w         mm: the table at least this wide
+    pad       mm of page around the table; the page is sized to the title, table and notes
+    """
+
+    def __init__(self, source=None, rows: list | None = None, style: Style | None = None, title: str | None = None,
+                 notes=None, header: bool = True, decimals=None, align=None, grid: bool = False,
+                 size: float | None = None, font: str | None = None, color: str = "#000000", w: float | None = None,
+                 pad: float = 3, journal: str | None = None, background: str | None = "#FFFFFF"):
+        if source is None and rows is None:
+            raise ValueError("a Table needs its cells: a file (Table(\"tables/genes.csv\")), a function, or rows=")
+        super().__init__(width=20, height=10, style=style, journal=journal, background=background)
+        self.props["kind"] = "table"
+        self.props["pad"] = pad
+        site = self.site
+        if isinstance(notes, (list, tuple)):
+            notes = "\n".join(str(n) for n in notes)
+
+        def part(e, role):
+            e.method, e.site = "Table", site
+            e.props["role"] = role
+            return e
+
+        if title:
+            part(self.text(str(title), x=pad, y=pad, weight="bold", width=60), "title")
+        self.cells = part(self.table(source if source is None or callable(source) else str(source), x=pad, y=pad,
+                                     w=w, rows=rows, header=header, size=size, decimals=decimals, align=align,
+                                     font=font, color=color, grid=grid), "cells")
+        if notes:
+            part(self.text(str(notes), x=pad, y=pad, width=60), "notes")
+        self.site = site
+
+    def caption(self, text: str):
+        raise TypeError("a Table's title and notes are its caption: Table(..., title=..., notes=...)")

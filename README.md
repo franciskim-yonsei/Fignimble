@@ -43,6 +43,8 @@ def draw(fig, genes=("GAPDH", "CD3E")):
     ...
 ```
 
+A project is a folder, by convention `fignimble/` in the paper's repository: a `fignimble.toml` at its top (which
+marks it, and the Fignimble version that made it), `style.py`, the figure files, and `panels/`, `images/` and `data/`.
 Coordinates are millimetres from the top-left corner, y down, as in Illustrator. One call per element, with literal
 numbers, so that moving something on the canvas is a one-number change to its line of code.
 
@@ -176,12 +178,18 @@ fingerprint of each file it was made from; `fignimble provenance poster.pdf` che
 - **One style for every panel.** `Style` (font, text size, line widths, despined axes) is applied to all panels, so
   plots made at different times match. `Style.journal("nature")` sets the journal's font, sizes and label convention.
 - **Preflight.** Every render checks what a production office would: text below the minimum size (inside panels too),
-  pictures below 300 dpi at their printed size, Type 3 fonts, elements outside the figure, duplicate labels, and
-  whether the width matches the journal's columns.
-- **40 journals**, computational biology's especially: the Nature Portfolio (Nature Methods, Nature
+  pictures below 300 dpi at their printed size, Type 3 fonts, elements outside the figure, duplicate labels, colors
+  color-blind readers confuse (and, as notes, colors that print alike in grayscale), scale bars without a pixel size,
+  and whether the width matches the journal's columns.
+- **Source data.** File ▸ Export Source Data… (`fignimble source-data fig1.py`) writes the values plotted in each
+  panel to a spreadsheet, one sheet per panel, as journals ask: lines, points, bars with their error bars, heatmaps,
+  read back from what the panel drew, or from a `source_data()` function next to the panel's `draw()`.
+- **71 journals**, computational biology's especially: the Nature Portfolio (Nature Methods, Nature
   Communications, Scientific Reports…), Cell Press (Cell Systems, Cell Genomics, Patterns…), PLOS (Computational
   Biology, ONE…), Oxford (Bioinformatics, NAR, Briefings in Bioinformatics, GigaScience…), BMC (Genome Biology, BMC
-  Bioinformatics…), Genome Research, Molecular Systems Biology, eLife, Frontiers, IEEE/ACM TCBB, Science, PNAS. Each
+  Bioinformatics…), Genome Research, Molecular Systems Biology, eLife, Frontiers, IEEE/ACM TCBB, Science, PNAS; and
+  chemistry and materials journals from ACS (JACS, ACS Nano, Nano Letters…), the RSC (Chemical Science, Journal of
+  Materials Chemistry A…), Elsevier (Materials Today, Acta Materialia…) and Wiley (Advanced Materials, Angewandte…). Each
   sets the figure widths, font sizes, panel label style and resolutions; `fignimble journals` lists them, with where
   each number comes from (the journal's guidelines, summaries of them, or the publisher's usual values). Check the
   journal's current guidelines before submitting.
@@ -191,11 +199,16 @@ fingerprint of each file it was made from; `fignimble provenance poster.pdf` che
   below what it asks is raised to it, 1200 dpi for line art, 600 with pictures (Cell Press 1000/500), an EPS has what
   Ghostscript rasterizes drawn at the line-art dpi, and the file written is measured: its dpi, or every picture inside
   a PDF or EPS against the 300 dpi asked for photographs. `fignimble export fig1.py fig1.tiff --journal cell`.
-- **Tables as Word files**: `fig.table("tables/genes.csv", x=4, y=80, decimals=[None, 0, 2, 3])` draws a table from a
-  CSV or TSV (Insert ▸ Table from CSV…, or drop the file on the figure), in the figure's font with rules above and
-  below the header and at the bottom; numbers go right. Journals want tables as text, so **File ▸ Export Table as
-  Word…** (and `fignimble table fig1.py 3 table1.docx`, or `fignimble table data.csv table1.docx`) writes it as a
-  real, editable Word table.
+- **Tables are tables, not pictures.** A table of the paper is a file of its own, listed apart from the figures and
+  numbered on its own, with its title and notes:
+  `tab = Table("tables/genes.csv", style=STYLE, title="...", decimals=[None, 0, 2, 3], notes="FDR, Benjamini–Hochberg.")`.
+  Its cells come from a CSV or TSV, from `rows=`, or from a function (a DataFrame works), so it stays tied to the
+  analysis. Its page sizes itself; **File ▸ New Table…** (⇧⌘T) starts one as a plain grid of cells: double-click a
+  cell to type in it. Preflight queries
+  what a copy editor would (values that show as 0.000, columns with mixed decimals, a missing title), and it exports
+  as a real, editable Word table with its title and notes, or Excel, CSV or TSV
+  (`fignimble export table1.py table1.docx`). `fig.figure("table1.py", ...)` shows it in a figure or poster;
+  **Insert ▸ Table…** embeds a grid of cells in a figure instead (`fig.table(...)`), typed into the same way.
 - **Panels from an SSH server**: Insert ▸ Panel from SSH Server… lists a folder on a server (hosts from
   `~/.ssh/config`) and copies the panel code you pick into `panels/`, its first line saying where it came from;
   right-click the panel ▸ **Update from Server** fetches it again (one undo step). If the server asks for a password
@@ -231,10 +244,54 @@ fignimble snapshot fig1.py      # render to .fignimble/snapshots/fig1.png and pr
 fignimble info fig1.py          # every element's box in mm, the labels, preflight warnings
 fignimble check                 # preflight every figure; exit status 1 on problems
 fignimble export fig1.py fig1.pdf --dpi 600   # --journal cell: its resolutions (default: the style's journal)
-fignimble table fig1.py 3 table1.docx          # a table of the figure as a Word file
-fignimble new myfigures --journal cell
+fignimble export table1.py table1.docx         # a table as a Word table, with its title and notes
+fignimble new --journal cell       # a project in ./fignimble, marked by fignimble.toml
 fignimble journals
 ```
+
+### Agent skills
+
+The skills teach an agent the same things anywhere, also outside Fignimble's terminal and in projects Fignimble hasn't
+opened. Install them for your agent:
+
+**Claude Code** (two separate prompts):
+
+```
+/plugin marketplace add pachterlab/Fignimble
+```
+```
+/plugin install fignimble@fignimble
+```
+
+**Codex:**
+
+```bash
+codex plugin marketplace add pachterlab/Fignimble
+codex plugin add fignimble@fignimble
+```
+
+**From the `fignimble` command** (any agent):
+
+```bash
+fignimble install-skills                 # Claude Code, every project (~/.claude/skills)
+fignimble install-skills --agent codex   # Codex (~/.codex/skills)
+fignimble install-skills --dest DIR      # any other agent's skills directory
+```
+
+Then ask:
+
+```LLM
+/fignimble-new-figure Make figure 2 in /PATH/TO/PROJECT from the CSVs in data/: a volcano plot, a heatmap of the top 50 genes and their expression over time.
+```
+
+| Skill | What it does | Example |
+|---|---|---|
+| `/fignimble` | how a Fignimble project works, the rules that keep a figure draggable, and how to check it (loaded by the others) | `/fignimble Move panel c under panel a and make it 60 mm wide.` |
+| `/fignimble-new-figure` | make a figure (and the project, if there is none) from data and a description: panels, layout, snapshot, preflight | `/fignimble-new-figure Make fig1 from data/de.csv: a volcano plot with the 20 most significant genes labeled, 60 by 50 mm.` |
+| `/fignimble-new-table` | make a table of the paper (a `Table` file) from data or an analysis, with title, units, decimals and notes; check it and export the Word table | `/fignimble-new-table Make table 1 from data/de.csv: the 20 most significant genes with fold change and adjusted p.` |
+| `/fignimble-from-notebook` | turn a notebook's or scripts' plots into panel functions and assemble them into a figure | `/fignimble-from-notebook Turn the plots in analysis.ipynb into figure 2.` |
+| `/fignimble-journal` | restyle figures for a journal, fix what `fignimble check` reports, and export files that meet its rules | `/fignimble-journal Restyle my figures for Cell and export them for submission.` |
+| `/fignimble-poster` | make a poster that places the paper's figures whole, with text from Markdown and a QR code; export it for printing | `/fignimble-poster Make an A0 poster from fig1 and fig2 with the abstract in intro.md.` |
 
 ## Install
 
@@ -275,6 +332,8 @@ engine/fignimble/   api.py       the figure language (Figure, Labels, Style)
                  core.py      session: render worker, edit operations, undo, watching the project
                  rpc.py       JSON lines over stdio for the app (docs/protocol.md)
                  cli.py       the fignimble command
+                 skills.py    fignimble install-skills
+skills/          agent skills (Claude Code and Codex plugins: .claude-plugin/, .codex-plugin/)
 apps/macos/      the macOS app (Swift, AppKit, SwiftTerm)
 examples/demo/   a project to try
 examples/kohl2025-ed5/   a 37-panel Nature figure (Cao et al. 2025, Extended Data Fig. 5) rebuilt from its authors'
