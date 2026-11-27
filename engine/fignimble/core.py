@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+from fnmatch import fnmatch
 from pathlib import Path
 
 from . import remote, srcedit, tables, templates
@@ -53,6 +54,8 @@ class WorkerProc:
         self.n = 0
 
     def _start(self):
+        if self.proc is not None and self.proc.poll() is None:
+            return
         env = dict(os.environ, PYTHONPATH=ENGINE_ROOT + os.pathsep + os.environ.get("PYTHONPATH", ""),
                    PYTHONUNBUFFERED="1", MPLBACKEND="Agg", PYTHONDONTWRITEBYTECODE="1")
         self.proc = subprocess.Popen([self.python, "-u", "-m", "fignimble.worker"], stdin=subprocess.PIPE,
@@ -66,10 +69,17 @@ class WorkerProc:
             q.put(None)
         threading.Thread(target=pump, daemon=True).start()
 
+    def prepare(self):
+        """Start the worker so its imports can run while the project is being opened."""
+        with self.lock:
+            try:
+                self._start()
+            except OSError as exc:
+                log("starting render worker", exc)     # the first render can retry
+
     def request(self, req: dict, timeout: float = 180) -> dict:
         with self.lock:
-            if self.proc is None or self.proc.poll() is not None:
-                self._start()
+            self._start()
             self.n += 1
             req = dict(req, id=self.n)
             try:
@@ -186,7 +196,7 @@ class Plan:
 
 
 class Session:
-    def __init__(self, project: str, python: str | None = None):
+    def __init__(self, project: str, python: str | None = None, *, defer_thumbnails: bool = False):
         self.project = Path(project).resolve()
         if not self.project.is_dir():
             raise FileNotFoundError(f"no folder {self.project}")
@@ -198,6 +208,7 @@ class Session:
         self.renders: dict[str, tuple] = {}            # figure -> (fingerprint, pxPerMM, result)
         self.render_lock = threading.Lock()
         self._background_figure: str | None = None    # set only while holding render_lock
+        self._defer_thumbnails = defer_thumbnails
         self.edit_lock = threading.RLock()
         self.on_event = None
         self.closed = False
@@ -251,17 +262,20 @@ class Session:
 
     def panel_files(self) -> list[str]:
         out = []
-        for p in sorted(self.project.rglob("*.py")):
-            rel = p.relative_to(self.project)
-            if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
-                continue
-            try:
-                t = p.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if not is_figure_source(t) and "def " in t and p.name != "style.py":
-                out.append(str(rel))
-        return out
+        for dirpath, dirs, files in os.walk(self.project):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+            folder = Path(dirpath)
+            for name in files:
+                if name == "style.py" or not fnmatch(name, "*.py"):
+                    continue
+                p = folder / name
+                try:
+                    t = p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if not is_figure_source(t) and "def " in t:
+                    out.append(p.relative_to(self.project))
+        return [str(p) for p in sorted(out)]
 
     def _watch(self):
         """Notice edits made outside the editor (an agent, a text editor) and re-render."""
@@ -281,6 +295,9 @@ class Session:
 
     def _render_background(self):
         """Keep the other figures' thumbnails current while nothing else happens."""
+        # Let the first figure requested by the editor have the worker to itself.
+        if self._defer_thumbnails and self.current not in self.renders:
+            return
         for f in self.figures():
             name = f["name"]
             if self.closed or name == self.current:
@@ -306,6 +323,12 @@ class Session:
             return
 
     # --- rendering ---
+
+    def prepare_opening_preview(self, name: str, px: float, dark: bool):
+        """Draw the initial figure while its project files sync to the editor."""
+        with self.render_lock:
+            if not self.closed and self.current is None:
+                self._render_locked(name, px, dark)
 
     def render(self, name: str, px: float | None = None, force: bool = False, dark: bool | None = None) -> dict:
         """A figure's render, from the cache when nothing changed. `dark`: its dark version (default: the version

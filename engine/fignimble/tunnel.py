@@ -319,7 +319,9 @@ class Tunnel:
                 res = msg.get("result")
                 if res is not None and self.R:
                     if cmd == "open" or cmd not in READ_ONLY:
-                        self.pull()
+                        initial_state = self.pull(open_options=ctx if cmd == "open" else None)
+                        if initial_state is not None:
+                            res["state"] = initial_state
                     if cmd in ("export", "export_table") and ctx and isinstance(res, dict) and res.get("path"):
                         got = self.call("read_files", paths=[res["path"]])["files"].get(res["path"])
                         if got:
@@ -419,13 +421,14 @@ class Tunnel:
             if changed:
                 self.save_state()
 
-    def pull(self):
+    def pull(self, open_options: dict | None = None) -> dict | None:
         """Fetch the files changed on the server (after sending this Mac's first)."""
         with self.sync_lock:
             if not (self.open and self.alive):
                 return
             self.push()
-            there = self.call("manifest")["files"]
+            manifest = self.call("manifest", **(open_options or {}))
+            there = manifest["files"]
             if os.name == "nt":
                 folded = set()
                 for rel in there:
@@ -445,6 +448,7 @@ class Tunnel:
                     (Path(self.L) / rel).unlink(missing_ok=True)
             if changed:
                 self.save_state()
+            return manifest.get("state")
 
     def poll(self):
         """Edits made in the mirror (an editor, the app) go to the server within a second."""
@@ -486,6 +490,7 @@ class Tunnel:
         ctx = None
         if cmd == "open":
             req["project"] = self.path
+            ctx = {key: req[key] for key in ("includeState", "preview") if key in req}
         else:
             self.push()
             if self.R:

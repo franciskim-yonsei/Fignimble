@@ -56,7 +56,7 @@ def test_cached_figure_bypasses_unrelated_background_render(tmp_path, monkeypatc
     first.write_text(source, encoding="utf-8")
     (tmp_path / "fig2.py").write_text(source, encoding="utf-8")
     monkeypatch.setattr(Session, "_watch", lambda self: None)
-    session = Session(str(tmp_path), sys.executable)
+    session = Session(str(tmp_path), sys.executable, defer_thumbnails=True)
     entered, release = Event(), Event()
     rendered = []
 
@@ -71,6 +71,8 @@ def test_cached_figure_bypasses_unrelated_background_render(tmp_path, monkeypatc
     monkeypatch.setattr(session.worker, "request", render)
     args = {"name": "fig1", "pxPerMM": 4}
     try:
+        session._render_background()
+        assert not rendered
         cached = session.api_figure(args)
         with ThreadPoolExecutor(max_workers=2) as executor:
             background = executor.submit(session._render_background)

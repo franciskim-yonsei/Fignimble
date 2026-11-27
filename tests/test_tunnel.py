@@ -80,6 +80,38 @@ def wait_for(cond, timeout=10):
     return False
 
 
+def test_remote_open_includes_state_after_sending_offline_edits(tmp_path, server):
+    app = App(tmp_path, server)
+    try:
+        opened = app("open", project=str(app.mirror))
+        assert "state" not in opened
+    finally:
+        assert app.close() == 0
+
+    added = app.mirror / "fig0.py"
+    added.write_text("from fignimble import Figure\nfig = Figure(width=100, height=80)\n", encoding="utf-8")
+    proj = server / "proj"
+    (proj / "fig2.py").write_text(added.read_text(encoding="utf-8"), encoding="utf-8")
+    app = App(tmp_path, server)
+    try:
+        opened = app("open", project=str(app.mirror), includeState=True,
+                     preview={"name": "fig2", "dark": True, "pxPerMM": 6})
+        state = opened["state"]
+        assert state["project"] == str(app.mirror.resolve())
+        assert state["figures"][0]["file"] == str(added)
+        assert (proj / added.name).read_bytes() == added.read_bytes()
+        first_thumb = proj / ".fignimble" / "out" / "fig2.dark.thumb.png"
+        assert wait_for(first_thumb.exists)
+        assert not (first_thumb.parent / "fig0.thumb.png").exists()
+        rendered_at = first_thumb.stat().st_mtime_ns
+        result = app("figure", name="fig2", dark=True, pxPerMM=6)
+        assert result["size"] == [100, 80] and result["pxPerMM"] == 6
+        assert Path(result["thumb"]).is_file()
+        assert first_thumb.stat().st_mtime_ns == rendered_at
+    finally:
+        assert app.close() == 0
+
+
 def test_remote_project(tmp_path, server):
     app = App(tmp_path, server)
     proj = server / "proj"

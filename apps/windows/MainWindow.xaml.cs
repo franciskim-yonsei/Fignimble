@@ -199,9 +199,9 @@ public partial class MainWindow : Window
 
     private async void ReloadClicked(object sender, RoutedEventArgs e) => await RenderAgain();
 
-    private async Task RefreshProject(string? preferred, bool external = false)
+    private async Task RefreshProject(string? preferred, bool external = false, ProjectState? initialState = null)
     {
-        await ReadState(preferred);
+        await ReadState(preferred, initialState);
         if (external && (CodeDirty || CaptionDirty) && (Figures.SelectedItem as FigureCard)?.Name != shownFigure)
         {
             Status.Text = "The current figure is no longer available. Your draft is still in the drawer.";
@@ -215,9 +215,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ReadState(string? preferred)
+    private async Task ReadState(string? preferred, ProjectState? initialState = null)
     {
-        state = await engine!.CallAsync<ProjectState>("state");
+        state = initialState ?? await engine!.CallAsync<ProjectState>("state");
         SetFigureCards(state.Figures, preferred);
         RefreshCodeFiles();
         RefreshHistory();

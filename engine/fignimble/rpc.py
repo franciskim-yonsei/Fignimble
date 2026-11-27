@@ -45,9 +45,11 @@ def main():
         where = os.path.expanduser(a["project"])
         if far and not os.path.isabs(where):           # a server folder as typed: from the home folder
             where = os.path.join(os.path.expanduser("~"), where)
-        s = Session(where, python)
+        s = Session(where, python, defer_thumbnails=bool(far and a.get("preview")))
         s.on_event = send
         app["s"] = s
+        if far:
+            s.worker.prepare()
         return {"ok": True, "project": str(s.project)}
 
     def requirements(a):
@@ -86,6 +88,17 @@ def main():
 
     def project():
         return app["s"].project if app["s"] else None
+
+    def manifest(a):
+        s = need()
+        result = mirror.manifest(s.project)
+        if a.get("includeState"):
+            state = result["state"] = s.api_state()
+            if (preview := a.get("preview")) and (figures := state["figures"]):
+                preferred = preview.get("name")
+                name = next((f["name"] for f in figures if f["name"] == preferred), figures[0]["name"])
+                pool.submit(s.prepare_opening_preview, name, float(preview.get("pxPerMM") or 4), bool(preview.get("dark")))
+        return result
 
     def close(a):
         if app["s"]:
@@ -132,7 +145,7 @@ def main():
     }
     if far:
         handlers.update({
-            "manifest": lambda a: mirror.manifest(need().project),
+            "manifest": manifest,
             "read_files": lambda a: far.read_files(project(), a),
             "write_file": lambda a: far.write_file(need().project, a),
             "delete_file": lambda a: far.delete_file(need().project, a),

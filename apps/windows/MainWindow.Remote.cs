@@ -16,7 +16,7 @@ public partial class MainWindow
     {
         public override string ToString() => Dir ? Name + "/" : Name;
     }
-    private sealed record RemoteOpenResult(string? RemotePath, string[]? TerminalArgv);
+    private sealed record RemoteOpenResult(string? RemotePath, string[]? TerminalArgv, ProjectState? State);
     private RemoteOpenResult? remoteOpen;
 
     private void RemoteClicked(object sender, RoutedEventArgs e)
@@ -123,13 +123,20 @@ public partial class MainWindow
             ResetProject();
             var remote = new RemoteProject(host, path, python, mirror);
             var client = SwitchEngine(ProjectPython(null), remote);
-            try { remoteOpen = await client.CallAsync<RemoteOpenResult>("open", new { project = mirror }); }
+            try
+            {
+                remoteOpen = await client.CallAsync<RemoteOpenResult>("open", new
+                {
+                    project = mirror, includeState = true,
+                    preview = new { name = preferred, dark = darkPreview, pxPerMM = InitialPreviewDensity }
+                });
+            }
             catch { needs = client.MissingRemotePackages; throw; }
             project = mirror;
             UpdateShellHeader();
             Title = $"Fignimble — {host}:{path}";
             if (TerminalRequested) StartShell();
-            await RefreshProject(preferred);
+            await RefreshProject(preferred, initialState: remoteOpen.State);
             RememberProject(shownFigure);
         });
         await Connect();
