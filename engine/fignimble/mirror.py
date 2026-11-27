@@ -15,6 +15,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from stat import S_ISREG
 
 from . import templates
 
@@ -36,10 +37,14 @@ def _stat(p: Path) -> list[int]:
     return [st.st_mtime_ns, st.st_size]
 
 
+def _is_mirror_filename(name: str) -> bool:
+    return not name.startswith(".") and os.path.splitext(name)[1].lower() in MIRROR_TYPES
+
+
 def mirrored(rel: str) -> bool:
     """Whether a project file (a relative path with /) belongs in the Mac's mirror."""
     parts = rel.split("/")
-    return (os.path.splitext(parts[-1])[1].lower() in MIRROR_TYPES and not parts[-1].startswith(".")
+    return (_is_mirror_filename(parts[-1])
             and not any(d in SKIP_DIRS or d.startswith(".") for d in parts[:-1])
             and not (len(parts) == 1 and parts[0] in templates.AGENT_FILES))
 
@@ -49,17 +54,18 @@ def scan(project: Path) -> dict:
     out = {}
     for dirpath, dirs, files in os.walk(project):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
-        for f in files:
-            p = Path(dirpath) / f
-            rel = p.relative_to(project).as_posix()
-            if not mirrored(rel):
+        directory = Path(dirpath)
+        relative = directory.relative_to(project).as_posix()
+        prefix = "" if relative == "." else relative + "/"
+        for name in files:
+            if not _is_mirror_filename(name) or (not prefix and name in templates.AGENT_FILES):
                 continue
             try:
-                st = p.stat()
+                st = (directory / name).stat()
             except OSError:
                 continue
-            if p.is_file() and st.st_size <= MIRROR_MAX:
-                out[rel] = [st.st_mtime_ns, st.st_size]
+            if S_ISREG(st.st_mode) and st.st_size <= MIRROR_MAX:
+                out[prefix + name] = [st.st_mtime_ns, st.st_size]
     return out
 
 

@@ -224,9 +224,19 @@ def test_connection_lost(tmp_path, server):
     assert "the connection to lab closed" in app.logged()
 
 
-def test_mirrored_files():
+def test_mirrored_files(tmp_path):
     sys.path.insert(0, str(ROOT / "engine"))
     from fignimble import mirror
     assert mirror.mirrored("fig1.py") and mirror.mirrored("panels/a.py") and mirror.mirrored("images/x.png")
     assert not mirror.mirrored(".fignimble/sprites/a.png") and not mirror.mirrored("venv/lib/x.py")
     assert not mirror.mirrored("data/big.h5ad") and not mirror.mirrored("CLAUDE.md")
+
+    included = ["fig1.py", "panels/CLAUDE.md", "data/counts.CSV"]
+    excluded = [".notes.txt", "CLAUDE.md", "data/big.h5ad", ".venv/lib/pkg.py", ".fignimble/sprites/a.png"]
+    for name in included + excluded:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"data")
+    with (tmp_path / "data/large.csv").open("wb") as large:
+        large.truncate(mirror.MIRROR_MAX + 1)
+    assert mirror.scan(tmp_path) == {name: [(tmp_path / name).stat().st_mtime_ns, 4] for name in included}
