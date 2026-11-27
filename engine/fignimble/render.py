@@ -39,6 +39,7 @@ from matplotlib.figure import Figure as MplFigure  # noqa: E402
 import matplotlib.lines  # noqa: E402
 from . import api, journals, layout, qr, tables  # noqa: E402
 from .mirror import SKIP_DIRS  # noqa: E402
+from .srcedit import is_figure_source  # noqa: E402
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 sys.dont_write_bytecode = True          # running a project's code leaves no __pycache__ in it
@@ -63,11 +64,6 @@ def rgb(c):
     if c is None:
         return None
     return tuple(mcolors.to_rgb(c))
-
-
-def is_figure_source(text: str) -> bool:
-    """A .py file that makes a figure (and is not a panel or a style module)."""
-    return "fignimble" in text and "Figure(" in text
 
 
 def run_isolated(path: Path) -> api.Figure:

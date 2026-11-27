@@ -23,8 +23,8 @@ import time
 from pathlib import Path
 
 from . import remote, srcedit, tables, templates
-from .render import SKIP_DIRS, is_figure_source
-from .srcedit import REMOVE, EditError, Raw, Source
+from .mirror import SKIP_DIRS
+from .srcedit import REMOVE, EditError, Raw, Source, is_figure_source
 
 ENGINE_ROOT = str(Path(__file__).resolve().parent.parent)
 GEOMETRY = {"panel": ("x", "y"), "image": ("x", "y"), "text": ("x", "y"), "rect": ("x", "y"),

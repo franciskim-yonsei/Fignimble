@@ -15,6 +15,11 @@ import re
 from . import api
 
 
+def is_figure_source(text: str) -> bool:
+    """A .py file that makes a figure (and is not a panel or a style module)."""
+    return "fignimble" in text and "Figure(" in text
+
+
 class EditError(Exception):
     pass
 

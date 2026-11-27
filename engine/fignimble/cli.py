@@ -31,7 +31,7 @@ def _project_of(fig: Path) -> Path:
 
 
 def _figures(project: Path) -> list[Path]:
-    from .render import is_figure_source
+    from .srcedit import is_figure_source
     return [p for p in sorted(project.glob("*.py")) if is_figure_source(p.read_text(encoding="utf-8", errors="replace"))]
 
 
