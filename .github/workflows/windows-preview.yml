@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     runs-on: windows-2025
@@ -51,7 +55,7 @@ jobs:
           $archive = [IO.Compression.ZipFile]::OpenRead($zip)
           try {
             $files = $archive.Entries.FullName -replace '\\', '/'
-            foreach ($required in @('Fignimble.exe', 'coreclr.dll', 'Renci.SshNet.dll', 'engine/fignimble/rpc.py', 'engine/fignimble/ssh_pipe.py', 'setup-python.ps1')) {
+            foreach ($required in @('Fignimble.exe', 'coreclr.dll', 'Renci.SshNet.dll', 'SSH-LICENSES.txt', 'engine/fignimble/rpc.py', 'engine/fignimble/ssh_pipe.py', 'setup-python.ps1')) {
               if ("Fignimble/$required" -notin $files) { throw "Missing from ZIP: $required" }
             }
           } finally {
@@ -87,5 +91,5 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $draft -ne 'true') { throw 'Create a draft release for this preview tag before building.' }
           $zip = Join-Path $env:RUNNER_TEMP 'Fignimble-Windows-x64.zip'
           $setup = Join-Path $env:RUNNER_TEMP 'Fignimble-Windows-x64-Setup.exe'
-          gh release upload $env:GITHUB_REF_NAME $zip $setup --repo $env:GITHUB_REPOSITORY
+          gh release upload $env:GITHUB_REF_NAME $zip $setup --clobber --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { throw 'The Windows files could not be uploaded.' }

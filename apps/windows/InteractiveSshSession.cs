@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Security.Cryptography;
 using System.Text;
 using Renci.SshNet;
 using Renci.SshNet.Common;
@@ -68,9 +69,11 @@ internal sealed class InteractiveSshSession : IDisposable
         Func<HostKeyEventArgs, bool> trust, Action<AuthenticationPromptEventArgs> prompt)
     {
         var keyboard = new KeyboardInteractiveAuthenticationMethod(endpoint.User);
-        keyboard.AuthenticationPrompt += (_, args) => prompt(args);
-        AuthenticationMethod[] methods = password.Length == 0
-            ? [keyboard] : [new PasswordAuthenticationMethod(endpoint.User, password), keyboard];
+        void Prompt(object? sender, AuthenticationPromptEventArgs args) => prompt(args);
+        keyboard.AuthenticationPrompt += Prompt;
+        byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
+        AuthenticationMethod[] methods = passwordBytes.Length == 0
+            ? [keyboard] : [new PasswordAuthenticationMethod(endpoint.User, passwordBytes), keyboard];
         var info = new ConnectionInfo(endpoint.Host, endpoint.Port, endpoint.User, methods)
             { Timeout = TimeSpan.FromSeconds(30) };
         var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(20) };
@@ -89,6 +92,11 @@ internal sealed class InteractiveSshSession : IDisposable
         {
             client.Dispose();
             throw;
+        }
+        finally
+        {
+            keyboard.AuthenticationPrompt -= Prompt;
+            CryptographicOperations.ZeroMemory(passwordBytes);
         }
     }
 
