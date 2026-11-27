@@ -233,7 +233,7 @@ public partial class MainWindow : Window
             finally { restoringFigure = false; }
             return;
         }
-        await During($"Rendering {card.Name}…", () => RenderFigure(card.Name));
+        await During($"Opening {card.Name}…", () => RenderFigure(card.Name));
     }
 
     private async Task RenderFigure(string name, bool external = false, bool force = false, bool? dark = null)
@@ -242,7 +242,6 @@ public partial class MainWindow : Window
         double density = switching || !validFigure
             ? figureCards.FirstOrDefault(card => card.Name == name)?.PreviewDensity ?? InitialPreviewDensity
             : PreviewDensityForView();
-        if (switching) ClearFigure(keepSprites: true);
         try
         {
             var render = await engine!.CallAsync<FigureRender>("figure", new { name, dark = dark ?? darkPreview, force }, density);
@@ -252,18 +251,23 @@ public partial class MainWindow : Window
         }
         catch
         {
-            if (switching && shownFigure is null) Page.ShowFigure(null, false);
+            if (switching && shownFigure != name)
+            {
+                var previous = figureCards.FirstOrDefault(card => card.Name == shownFigure);
+                Figures.SelectedItem = previous;
+                if (previous is null) ClearFigure();
+            }
             throw;
         }
     }
 
-    private void ClearFigure(bool keepSprites = false)
+    private void ClearFigure()
     {
         previewTimer.Stop();
         shownFigure = null;
         currentRender = null;
         validFigure = false;
-        Page.ShowFigure(null, false, keepSprites);
+        Page.ShowFigure(null, false);
         RefreshLayers();
         PageView.Visibility = Visibility.Collapsed;
         ScheduleRulers();

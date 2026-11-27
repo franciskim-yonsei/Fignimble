@@ -5,7 +5,9 @@
 
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -46,6 +48,51 @@ def test_render(session):
     assert [l["text"] for l in r["labels"]] == list("abcdef")
     assert all(Path(e["sprite"]["file"]).exists() for e in r["elements"])
     assert session.api_state()["figures"][0]["name"] == "fig1"
+
+
+def test_cached_figure_bypasses_unrelated_background_render(tmp_path, monkeypatch):
+    source = "from fignimble import Figure\nfig = Figure(width=100)\n"
+    first = tmp_path / "fig1.py"
+    first.write_text(source, encoding="utf-8")
+    (tmp_path / "fig2.py").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(Session, "_watch", lambda self: None)
+    session = Session(str(tmp_path), sys.executable)
+    entered, release = Event(), Event()
+    rendered = []
+
+    def render(req):
+        file = Path(req["file"])
+        rendered.append(file.stem)
+        if file.stem == "fig2":
+            entered.set()
+            assert release.wait(10)
+        return {"figure": file.stem, "source": file.read_text(encoding="utf-8")}
+
+    monkeypatch.setattr(session.worker, "request", render)
+    args = {"name": "fig1", "pxPerMM": 4}
+    try:
+        cached = session.api_figure(args)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            background = executor.submit(session._render_background)
+            try:
+                assert entered.wait(5)
+                warm = executor.submit(session.api_figure, args)
+                assert warm.result(timeout=5) is cached
+                assert rendered == ["fig1", "fig2"]
+
+                # Changes from another editor still invalidate the cached preview.
+                changed = source.replace("100", "2000")
+                first.write_text(changed, encoding="utf-8")
+                refresh = executor.submit(session.api_figure, args)
+                with pytest.raises(TimeoutError):
+                    refresh.result(timeout=0.1)
+            finally:
+                release.set()
+            background.result(timeout=5)
+            assert refresh.result(timeout=5)["source"] == changed
+        assert rendered == ["fig1", "fig2", "fig1"]
+    finally:
+        session.close()
 
 
 def test_move_and_undo(session):

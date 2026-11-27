@@ -111,12 +111,12 @@ public sealed partial class FigureCanvas : FrameworkElement
         SelectionChanged?.Invoke();
     }
 
-    internal void ShowFigure(FigureRender? render, bool keepSelection, bool keepSprites = false)
+    internal void ShowFigure(FigureRender? render, bool keepSelection)
     {
         if (!keepSelection) SetTool(CanvasTool.Select);
         figure = render;
         SelectIds(keepSelection ? selected : []);
-        if (!keepSprites) UpdateSpriteCache(render);
+        UpdateSpriteCache(render);
         Width = render?.Size?[0] ?? 1;
         Height = render?.Size?[1] ?? 1;
         InvalidateVisual();

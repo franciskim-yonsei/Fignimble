@@ -197,6 +197,7 @@ class Session:
         self.redo: list[dict] = []
         self.renders: dict[str, tuple] = {}            # figure -> (fingerprint, pxPerMM, result)
         self.render_lock = threading.Lock()
+        self._background_figure: str | None = None    # set only while holding render_lock
         self.edit_lock = threading.RLock()
         self.on_event = None
         self.closed = False
@@ -281,18 +282,27 @@ class Session:
     def _render_background(self):
         """Keep the other figures' thumbnails current while nothing else happens."""
         for f in self.figures():
-            if self.closed or f["name"] == self.current:
+            name = f["name"]
+            if self.closed or name == self.current:
                 continue
-            got = self.renders.get(f["name"])
+            got = self.renders.get(name)
             if got and got[0] == self._sig:
                 continue
-            if self.render_lock.locked():
+            if not self.render_lock.acquire(blocking=False):
                 return
             try:
-                self.render(f["name"], (got[1] if got else 4.0))
-                self.emit({"event": "rendered", "figure": f["name"]})
+                try:
+                    if self.closed or name == self.current:
+                        return
+                    self._background_figure = name
+                    got = self.renders.get(name)
+                    self._render_locked(name, got[1] if got else 4.0, self.dark)
+                finally:
+                    self._background_figure = None
+                    self.render_lock.release()
+                self.emit({"event": "rendered", "figure": name})
             except Exception as exc:                      # noqa: BLE001
-                log("background render", f["name"], exc)
+                log("background render", name, exc)
             return
 
     # --- rendering ---
@@ -302,15 +312,29 @@ class Session:
         the editor shows)."""
         px = float(px or 12.0)
         dark = self.dark if dark is None else bool(dark)
-        with self.render_lock:
-            sig = self.fingerprint()
-            got = self.renders.get(name)
-            if got and not force and got[0] == sig and got[1] == px and got[2].get("dark", False) == dark:
+        background = self._background_figure
+        if not force and background is not None and background != name:
+            got = self._matching_render(name, px, dark)
+            # Recheck the snapshot after scanning in case the render or cache changed during the scan.
+            if (got and got[0] == self.fingerprint() and self._background_figure == background
+                    and self.renders.get(name) is got):
                 return got[2]
-            res = self.worker.request({"cmd": "render", "project": str(self.project), "cache": str(self.cache),
-                                       "file": self.figure_file(name), "pxPerMM": px, "dark": dark})
-            self.renders[name] = (sig, px, res)
-            return res
+        with self.render_lock:
+            return self._render_locked(name, px, dark, force)
+
+    def _matching_render(self, name: str, px: float, dark: bool) -> tuple | None:
+        got = self.renders.get(name)
+        return got if got and got[1] == px and got[2].get("dark", False) == dark else None
+
+    def _render_locked(self, name: str, px: float, dark: bool, force: bool = False) -> dict:
+        sig = self.fingerprint()
+        got = None if force else self._matching_render(name, px, dark)
+        if got and got[0] == sig:
+            return got[2]
+        res = self.worker.request({"cmd": "render", "project": str(self.project), "cache": str(self.cache),
+                                   "file": self.figure_file(name), "pxPerMM": px, "dark": dark})
+        self.renders[name] = (sig, px, res)
+        return res
 
     def restart_renderer(self):
         """After packages were installed: a fresh worker that can import them, and every figure rendered again."""
