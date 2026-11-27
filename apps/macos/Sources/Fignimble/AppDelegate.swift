@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         MainController.applyAppearance()
+        OfficeFonts.register()          // Aptos, Calibri, ... in the font menu, before it is built
         controller = MainController()
         buildMenu()
         controller.showWindow()
@@ -138,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         item("Quit Fignimble", #selector(NSApplication.terminate(_:)), "q", to: NSApp)])
         menu("File", [item("New Project…", #selector(MainController.newProject(_:)), "n", [.command, .shift]),
                       item("New Figure…", #selector(MainController.newFigure(_:)), "n"),
+                      item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
                       item("Open Project…", #selector(MainController.openProject(_:)), "o"),
                       item("Open Project on SSH Server…", #selector(MainController.openRemoteProject(_:)), "o", [.command, .shift]),
                       recentMenu(), sep(),
@@ -145,7 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                       item("Show Project in Finder", #selector(MainController.revealProject(_:))), sep(),
                       item("Export Figure…", #selector(MainController.exportFigure(_:)), "e"),
                       item("Export All Figures as PDF…", #selector(MainController.exportAll(_:)), "e", [.command, .shift]),
-                      item("Export Table…", #selector(MainController.exportTable(_:))), sep(),
+                      item("Export Table…", #selector(MainController.exportTable(_:))),
+                      item("Export Source Data…", #selector(MainController.exportSourceData(_:))), sep(),
                       item("Close", #selector(NSWindow.performClose(_:)), "w", to: nil)])
         menu("Edit", [item("Undo", #selector(MainController.undoEdit(_:)), "z"),
                       item("Redo", #selector(MainController.redoEdit(_:)), "z", [.command, .shift]), sep(),
@@ -163,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         item("Figure…", #selector(MainController.insertFigure(_:))),
                         item("QR Code…", #selector(MainController.insertQR(_:))),
                         item("BioCartoon Icons…", #selector(MainController.showBioCartoon(_:)), "b", [.command, .shift]),
-                        item("New Table…", #selector(MainController.newTable(_:)), "t", [.command, .shift]),
+                        item("Table…", #selector(MainController.insertGridTable(_:))),
                         item("Table from CSV…", #selector(MainController.insertTable(_:))),
                         item("Panel from SSH Server…", #selector(MainController.insertRemotePanel(_:))),
                         item("Scale Bar on Picture…", #selector(MainController.addScaleBar(_:))),

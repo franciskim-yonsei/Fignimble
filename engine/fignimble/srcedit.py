@@ -16,8 +16,13 @@ from . import api
 
 
 def is_figure_source(text: str) -> bool:
-    """A .py file that makes a figure (and is not a panel or a style module)."""
-    return "fignimble" in text and "Figure(" in text
+    """A .py file that makes a figure or a table (and is not a panel or a style module)."""
+    return "fignimble" in text and ("Figure(" in text or is_table_source(text))
+
+
+def is_table_source(text: str) -> bool:
+    """A .py file that makes a Table (`tab = Table(...)`)."""
+    return "fignimble" in text and re.search(r"(?m)^\w+\s*=\s*(fignimble\.)?Table\(", text) is not None
 
 
 class EditError(Exception):
@@ -50,7 +55,7 @@ def _params(fn) -> list[str]:
 PARAMS = {name: _params(getattr(api.Figure, name)) for name in
           ("panel", "image", "text", "line", "arrow", "rect", "ellipse", "bracket", "guide", "layout", "inset",
            "legend", "path", "zoom", "scalebar", "table", "caption")}
-PARAMS.update({"Figure": _params(api.Figure.__init__), "Labels": _params(api.Labels.__init__),
+PARAMS.update({"Figure": _params(api.Figure.__init__), "Table": _params(api.Table.__init__), "Labels": _params(api.Labels.__init__),
                "Style": _params(api.Style.__init__), "Labels.journal": ["name"], "Style.journal": ["name"]})
 PARAMS.update({n: _params(getattr(api, n).__init__) for n in ("Panel", "Image", "Spacer", "Row", "Column", "Grid",
                                                              "Design")})

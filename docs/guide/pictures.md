@@ -27,10 +27,18 @@ and SVG pictures stay vector when mirrored. The inspector and the **Object** men
 detail = fig.inset(Image("images/cells.png"), within=cells, x=0.6, y=0.6, w=0.38, h=0.38)
 fig.zoom(cells, detail, region=(0.2, 0.2, 0.25, 0.25))       # a box and lines; the inset shows what's in the box
 fig.scalebar(cells, length=50, unit="µm", pixel_size=0.325)  # sized from the picture's real pixels
+fig.scalebar(stack, length=10, unit="µm")                     # the pixel size from the picture's metadata
 ```
 
 **Insert ▸ Zoom Box** on one picture makes the magnified inset too; drag the box and the inset follows.
-**Insert ▸ Scale Bar on Picture…** asks for the pixel size.
+**Insert ▸ Scale Bar on Picture…** asks for the bar's length and the size of one pixel of the original picture.
+
+Leave the pixel size out and Fignimble reads it from the picture: an OME-TIFF's physical pixel size, an ImageJ TIFF's
+calibration, or a TIFF, PNG or JPEG resolution fine enough to be the microscope's (pixels under 2.5 µm; 300 dpi is a
+print setting, not a pixel size). The inspector shows where it came from. Preflight warns when a scale bar has no
+pixel size at all, since a bar drawn from a guess is wrong without looking wrong, and when a pixel size you typed
+disagrees with the picture's metadata, as it does when a picture was resized after it was taken. The metadata
+converts between µm, nm, mm, cm, m and Å, so `unit="nm"` works on a picture calibrated in microns.
 
 ## BioCartoon icons
 

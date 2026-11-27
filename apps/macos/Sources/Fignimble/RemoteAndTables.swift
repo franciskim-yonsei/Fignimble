@@ -15,6 +15,37 @@ extension MainController {
 
     // MARK: tables
 
+    /// Insert ▸ Table…: a table embedded in the figure, an m x n grid of empty cells (kept in tables/), placed on the
+    /// part of the figure in view, to type into: double-click a cell, Tab to the next.
+    @objc func insertGridTable(_ sender: Any?) {
+        guard let f = figure, let name = current else { return }
+        let a = NSAlert(); a.messageText = "Insert table"
+        a.informativeText = "A grid of cells in this figure. Double-click a cell to type in it; Tab goes to the next. (A table of the paper, Table 1, goes in a file of its own: File ▸ New Table…)"
+        let rows = NSTextField(string: "4"), cols = NSTextField(string: "3")
+        for x in [rows, cols] { x.widthAnchor.constraint(equalToConstant: 50).isActive = true }
+        let grid = NSGridView(views: [[NSTextField(labelWithString: "Rows (with the header)"), rows],
+                                      [NSTextField(labelWithString: "Columns"), cols]])
+        grid.frame = NSRect(x: 0, y: 0, width: 260, height: 60)
+        a.accessoryView = grid; a.addButton(withTitle: "Insert"); a.addButton(withTitle: "Cancel")
+        a.beginSheetModal(for: window) { [weak self] r in
+            guard let self, r == .alertFirstButtonReturn else { return }
+            let c = self.canvas.visibleFigureCenter() ?? CGPoint(x: f.size.width / 2, y: f.size.height / 2)
+            let args: [String: Any] = ["figure": name, "rows": max(1, min(200, Int(rows.stringValue) ?? 4)),
+                                       "cols": max(1, min(50, Int(cols.stringValue) ?? 3)),
+                                       "x": max(0, (Double(c.x) - 20).rounded()), "y": max(0, (Double(c.y) - 10).rounded()),
+                                       "pxPerMM": self.lastPx]
+            self.enqueue { [weak self] in guard let self else { return }
+                do {
+                    let r = try await self.engine.json("insert_table", args)
+                    if let fig = r["figure"] as? [String: Any] { self.apply(fig) }
+                    if let sel = r["select"] as? [String] { self.canvas.selection = sel }
+                    if r["ok"] as? Bool == false { self.toast(r["error"] as? String ?? "", error: true) }
+                } catch { self.toast(error.localizedDescription, error: true) }
+                await self.refreshState()
+            }
+        }
+    }
+
     @objc func insertTable(_ sender: Any?) {
         guard figure != nil else { return }
         let o = NSOpenPanel()
@@ -26,12 +57,12 @@ extension MainController {
         }
     }
 
-    /// Insert ▸ New Table…: a table in a figure of its own (its cells in tables/<name>.csv), sized to the table,
-    /// to type into with the inspector's cells and export as a picture, Word, Excel, CSV or TSV.
+    /// Insert ▸ New Table…: a table of the paper in a file of its own (a Table; its cells in tables/<name>.csv),
+    /// listed under Tables, to type into on the canvas and export as Word, Excel, CSV or TSV (or a picture).
     @objc func newTable(_ sender: Any?) {
         guard project != nil else { newProject(sender); return }
         let a = NSAlert(); a.messageText = "New table"
-        a.informativeText = "A table in a figure of its own. Type its cells in the inspector; export it as a picture or as Word, Excel, CSV or TSV."
+        a.informativeText = "A table of the paper (Table 1), in a file of its own, listed apart from the figures: a grid of cells to type into. Export it as Word, Excel, CSV or TSV for the journal. (For a table inside a figure: Insert ▸ Table…)"
         let name = NSTextField(string: "table\(figures.filter { ($0["name"] as? String ?? "").hasPrefix("table") }.count + 1)")
         let rows = NSTextField(string: "4"), cols = NSTextField(string: "3")
         for f in [name, rows, cols] { f.widthAnchor.constraint(equalToConstant: f === name ? 140 : 50).isActive = true }
@@ -63,7 +94,7 @@ extension MainController {
     /// is then made the table's size.
     func applyTableCells(_ oid: String, _ rows: [[String]]) {
         var a: [String: Any] = ["op": "table_rows", "oid": oid, "rows": rows]
-        if figure?.isTableFigure == true { a["then"] = ["op": "fit_figure", "margin": 3] }      // one undo step
+        if figure?.isTableFigure == true && figure?.isTable == false { a["then"] = ["op": "fit_figure", "margin": 3] }  // one undo step
         edit(a)
         let gen = canvas.tableDraftGeneration
         enqueue { [weak self] in self?.canvas.clearTableDraft(gen) }
@@ -73,7 +104,7 @@ extension MainController {
     @objc func exportTable(_ sender: Any?) {
         guard let name = current, let f = figure else { return }
         let picked = canvas.selection.count == 1 ? f.element(canvas.selection[0]) : nil
-        guard let e = picked?.kind == "table" ? picked : (f.isTableFigure ? f.elements.first : nil) else { return }
+        guard let e = picked?.kind == "table" ? picked : f.tableCells else { return }
         let p = NSSavePanel()
         let formats = ["docx", "xlsx", "csv", "tsv"]
         let format = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -100,6 +131,28 @@ extension MainController {
                     if r["ok"] as? Bool == true { toast("Exported \(u.lastPathComponent)") }
                     else { toast(r["error"] as? String ?? "Couldn't export the table", error: true) }
                 } catch { toast(error.localizedDescription, error: true) }
+            }
+        }
+    }
+
+    /// File ▸ Export Source Data…: the values plotted in each panel, one sheet per panel, as journals ask for.
+    @objc func exportSourceData(_ sender: Any?) {
+        guard let name = current, figure != nil else { return }
+        let p = NSSavePanel()
+        p.allowedContentTypes = [UTType(filenameExtension: "xlsx") ?? .data]
+        p.nameFieldStringValue = name + "_source_data.xlsx"
+        p.message = "The values plotted in each panel, one sheet per panel. A panel's source_data() function supplies its own."
+        if let proj = project { p.directoryURL = URL(fileURLWithPath: proj) }
+        p.beginSheetModal(for: window) { [weak self] r in
+            guard let self, r == .OK, let u = p.url else { return }
+            self.enqueue { [weak self] in guard let self else { return }
+                self.busy("Writing source data…")
+                do {
+                    let r = try await self.engine.json("export_source_data", ["figure": name, "path": u.path])
+                    self.idle()
+                    let n = (r["panels"] as? [Any])?.count ?? 0
+                    toast("Exported \(u.lastPathComponent): \(n) panel\(n == 1 ? "" : "s")")
+                } catch { self.idle(); toast(error.localizedDescription, error: true) }
             }
         }
     }

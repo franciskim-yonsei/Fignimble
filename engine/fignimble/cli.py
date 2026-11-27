@@ -1,10 +1,12 @@
 """The fignimble command: render, check and export figures from a terminal (and let a coding agent see its work).
 
-    fignimble new myproject [--journal nature]     a new project: style.py and an empty fig1.py
-                                                   (--poster a0, 48x36, ...: a poster.py to start from)
+    fignimble new [folder] [--journal nature]      a new project (folder: fignimble): its fignimble.toml marker,
+                                                   style.py and an empty fig1.py (--poster a0, 48x36, ...: a
+                                                   poster.py to start from)
     fignimble snapshot fig1.py [--dpi 150]         render to .fignimble/snapshots/fig1.png and print the path
     fignimble info fig1.py [--json]                elements, boxes (mm), labels and preflight warnings
-    fignimble check [fig1.py ...]                  preflight warnings of every figure; exit status 1 if any
+    fignimble check [fig1.py ...]                  preflight warnings of every figure of the project this folder
+                                                   is in; exit status 1 if any
     fignimble table fig1.py 0 table1.docx          a table of a figure (its element number or name) as a Word
                                                    file; or fignimble table data.csv table1.docx
     fignimble export fig1.py fig1.pdf [--dpi 600]  PDF, SVG, EPS, PNG, TIFF, JPEG or PPTX (--cmyk, --outline for
@@ -24,10 +26,18 @@ import os
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 
 def _project_of(fig: Path) -> Path:
     """The project of a figure file: the folder holding it (and style.py, panels/ ...)."""
     return fig.resolve().parent
+
+
+def _here() -> Path:
+    """The project the current folder is in (the nearest fignimble.toml at or above it), else the current folder."""
+    from .templates import find_project
+    return find_project(Path.cwd()) or Path.cwd()
 
 
 def _figures(project: Path) -> list[Path]:
@@ -41,10 +51,12 @@ def _renderer(fig: Path):
 
 
 def main(argv=None):
+    from . import __version__
     ap = argparse.ArgumentParser(prog="fignimble", description="Multi-panel figures for publication, from Python.")
+    ap.add_argument("--version", action="version", version=f"fignimble {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("new", help="make a new project")
-    p.add_argument("folder")
+    p.add_argument("folder", nargs="?", default="fignimble", help="the new project's folder (default: fignimble)")
     p.add_argument("--journal", default="nature", help="a journal key from `fignimble journals` (nature, cell, bioinformatics, plos-computational-biology, ...), or none")
     p.add_argument("--poster", help="make a poster instead: a template from `fignimble journals` (a0, 48x36, 72x48, 24x36, ...)")
     p.add_argument("--landscape", action="store_true", help="the poster wider than tall")
@@ -58,7 +70,7 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("check", help="preflight check figures")
     p.add_argument("figures", nargs="*")
-    p = sub.add_parser("export", help="export a figure")
+    p = sub.add_parser("export", help="export a figure or a table (a table also as .docx, .xlsx, .csv or .tsv)")
     p.add_argument("figure")
     p.add_argument("output")
     p.add_argument("--dpi", type=int, default=600)
@@ -70,23 +82,49 @@ def main(argv=None):
     p.add_argument("--crop-marks", action="store_true", help="crop marks outside the figure (PDF)")
     p = sub.add_parser("provenance", help="what an exported file was made from, checked against the project")
     p.add_argument("file")
-    p.add_argument("--project", help="the project folder (default: the current folder)")
-    p = sub.add_parser("table", help="write a table as a Word file (.docx)")
-    p.add_argument("source", help="a figure file (then the table's element number or name) or a .csv/.tsv file")
-    p.add_argument("args", nargs="+", help="[element] output.docx")
+    p.add_argument("--project", help="the project folder (default: the project the current folder is in)")
+    p = sub.add_parser("table", help="write a table as a Word, Excel, CSV or TSV file")
+    p.add_argument("source", help="a table file (table1.py), a figure file (then the table's element number or "
+                                  "name, if it has more than one) or a .csv/.tsv file")
+    p.add_argument("args", nargs="+", help="[element] output (.docx, .xlsx, .csv or .tsv)")
     p.add_argument("--decimals", type=int)
     p.add_argument("--no-header", action="store_true")
     p.add_argument("--title")
+    p = sub.add_parser("source-data", help="write the values plotted in each panel to a spreadsheet (.xlsx)")
+    p.add_argument("figure")
+    p.add_argument("output", nargs="?", help="default: <figure>_source_data.xlsx")
     sub.add_parser("journals", help="list journal presets")
+    p = sub.add_parser("install-skills", help="install Fignimble's agent skills for Claude Code, Codex or another agent",
+                       description="Install the agent skills that come with Fignimble, so a coding agent knows how to "
+                                   "make, check and export figures and posters with it. Run it again after updating "
+                                   "Fignimble to update them.")
+    p.add_argument("names", nargs="*", metavar="SKILL",
+                   help="only these skills, e.g. fignimble-poster (or just poster); default: all")
+    p.add_argument("--agent", choices=("claude", "codex"), default="claude",
+                   help="claude: ~/.claude/skills (default); codex: ~/.codex/skills")
+    where = p.add_mutually_exclusive_group()
+    where.add_argument("--project", nargs="?", const=".", metavar="DIR",
+                       help="into the project at DIR (default: this folder) instead of your own skills folder")
+    where.add_argument("--dest", metavar="DIR", help="into this skills folder, for another agent")
+    p.add_argument("--overwrite", action="store_true",
+                   help="replace a skill folder of the same name that this command didn't install")
+    act = p.add_mutually_exclusive_group()
+    act.add_argument("--list", action="store_true", help="list the skills and whether each is installed")
+    act.add_argument("--uninstall", action="store_true", help="remove the skills this command installed")
     a = ap.parse_args(argv)
+
+    if a.cmd == "install-skills":
+        from . import skills
+        return skills.main(a.names, a.agent, a.project, a.dest, a.overwrite, a.list, a.uninstall)
 
     if a.cmd == "new":
         from .templates import new_project
         r = new_project(a.folder, None if a.journal == "none" else a.journal, poster=a.poster, landscape=a.landscape)
-        print(f"made {r['project']} ({'poster.py, a poster to start from' if a.poster else 'style.py and an empty fig1.py'})")
+        print(f"made {r['project']} (fignimble.toml, "
+              f"{'poster.py, a poster to start from' if a.poster else 'style.py and an empty fig1.py'})")
         return 0
     if a.cmd == "provenance":
-        return _provenance(a.file, Path(a.project) if a.project else Path.cwd())
+        return _provenance(a.file, Path(a.project) if a.project else _here())
     if a.cmd == "journals":
         from . import journals
         from .journals import JOURNALS
@@ -124,6 +162,8 @@ def main(argv=None):
         for w in res["warnings"]:
             print("warning:", w, file=sys.stderr)
         return 0
+    if a.cmd == "export" and Path(a.output).suffix.lower().lstrip(".") in ("docx", "xlsx", "csv", "tsv"):
+        return main(["table", a.figure, a.output])            # a table, as a file people edit
     if a.cmd == "export":
         fig = Path(a.figure)
         res = _renderer(fig).export(str(fig.resolve()), str(Path(a.output).resolve()), dpi=a.dpi, dark=a.dark,
@@ -142,34 +182,40 @@ def main(argv=None):
         for w in res["warnings"]:
             print("warning:", w, file=sys.stderr)
         return 0
+    if a.cmd == "source-data":
+        from . import sourcedata
+        fig = Path(a.figure)
+        out = a.output or f"{fig.stem}_source_data.xlsx"
+        try:
+            res = sourcedata.export(_renderer(fig), str(fig.resolve()), str(Path(out).resolve()))
+        except ValueError as exc:
+            print(exc)
+            return 1
+        print(f"wrote {res['path']}")
+        for p_ in res["panels"]:
+            print(f"  {p_['sheet']}: {p_['blocks']} table{'s' if p_['blocks'] != 1 else ''}, {p_['how']}")
+        return 0
     if a.cmd == "table":
         from . import tables
         src = Path(a.source)
         out = a.args[-1]
         if src.suffix.lower() == ".py":
-            if len(a.args) != 2:
-                print("give the table's element number (as fignimble info shows it) or name, then the .docx")
+            if len(a.args) > 2:
+                print("give the table's element number (as fignimble info shows it) or name, then the file")
                 return 2
             res = _renderer(src).render(str(src.resolve()), sprites=False)
             if res.get("error"):
                 print(res["error"])
                 return 1
-            want = a.args[0].lstrip("#")
-            e = next((e for e in res["elements"] if e["kind"] == "table" and want in (e["oid"], e["props"].get("name"))),
-                     None)
-            if e is None:
-                print(f"{src.name} has no table {a.args[0]}")
+            try:
+                path = tables.write_rendered(res, out, oid=a.args[0].lstrip("#") if len(a.args) == 2 else None,
+                                             title=a.title)
+            except ValueError as exc:
+                print(f"{src.name}: {exc}")
                 return 1
-            p = e["props"]
-            rows = p["rows"] if p.get("rows") is not None else tables.read_rows(src.parent / p["source"])
-            st = res["style"]["props"]
-            path = tables.write_docx(rows, out, header=p.get("header", True), decimals=p.get("decimals"),
-                                     align=p.get("align"), font=p.get("font") or st.get("font") or "Arial",
-                                     size=p.get("size") or st.get("size") or 7, title=a.title,
-                                     grid=bool(p.get("grid")))
         else:
-            path = tables.write_docx(tables.read_rows(src), out, header=not a.no_header, decimals=a.decimals,
-                                     title=a.title)
+            path = tables.write_table(tables.read_rows(src), out, header=not a.no_header, decimals=a.decimals,
+                                      title=a.title)
         print(f"wrote {path}")
         return 0
     if a.cmd == "info":
@@ -184,7 +230,7 @@ def main(argv=None):
         _describe(res)
         return 0
     if a.cmd == "check":
-        figs = [Path(f) for f in a.figures] or _figures(Path.cwd())
+        figs = [Path(f) for f in a.figures] or _figures(_here())
         bad = 0
         for fig in figs:
             res = _renderer(fig).render(str(fig.resolve()), sprites=False)
@@ -239,11 +285,15 @@ def _provenance(file: str, project: Path) -> int:
 def _describe(res: dict):
     W, H = res["size"]
     j, pr = res.get("journal"), res.get("poster")
-    print(f"{Path(res['file']).name}: {W:g} x {H:g} mm" + (f" ({j['name']})" if j else "")
-          + (f" ({pr['name']} poster{', landscape' if pr['landscape'] else ''})" if pr else ""))
-    lp = res["labelStyle"]["props"]
-    print(f"labels: format {lp['format']!r}, {lp['case']}case, {lp['size']} pt {lp['weight']}, offset "
-          f"({lp['dx']}, {lp['dy']}) mm, order {lp['order']}")
+    table = (res.get("figureProps") or {}).get("kind") == "table"
+    if table:
+        print(f"{Path(res['file']).name}: a table, its page {W:g} x {H:g} mm (sized to it)")
+    else:
+        print(f"{Path(res['file']).name}: {W:g} x {H:g} mm" + (f" ({j['name']})" if j else "")
+              + (f" ({pr['name']} poster{', landscape' if pr['landscape'] else ''})" if pr else ""))
+        lp = res["labelStyle"]["props"]
+        print(f"labels: format {lp['format']!r}, {lp['case']}case, {lp['size']} pt {lp['weight']}, offset "
+              f"({lp['dx']}, {lp['dy']}) mm, order {lp['order']}")
     labels = {l["panel"]: l["text"] for l in res["labels"]}
     print("elements (drawing order; x, y, w, h in mm):")
     for e in res["elements"]:
@@ -259,11 +309,14 @@ def _describe(res: dict):
                 "image": lambda: p["source"], "text": lambda: repr(p["text"]) if not p.get("source") else p["source"],
                 "figure": lambda: f"{p['source']}, scaled {e.get('scale', 1):g}" + ("" if p.get("letters", True)
                                                                                    else ", no letters"),
+                "table": lambda: (f"from {e['fromCode']}()" if e.get("fromCode") else p.get("source") or "rows=")
+                + (f", {len(p['cells'])} rows x {max(len(r) for r in p['cells'])} columns" if p.get("cells") else ""),
                 "qr": lambda: repr(p["data"]),
                 "bracket": lambda: repr(p["text"])}.get(e["kind"], lambda: "")()
         lab = f" [{labels[e['oid']]}]" if e["oid"] in labels else ""
         line = e.get("site", {}).get("line")
-        print(f"  #{e['oid']:<3} {e['kind']:8}{lab:5} {x:7.1f} {y:7.1f} {w:7.1f} {h:7.1f}  {what}  (line {line})")
+        kind = p.get("role", e["kind"]) if e.get("method") == "Table" else e["kind"]
+        print(f"  #{e['oid']:<3} {kind:8}{lab:5} {x:7.1f} {y:7.1f} {w:7.1f} {h:7.1f}  {what}  (line {line})")
         if e.get("error"):
             print("       ERROR " + e["error"].strip().replace("\n", "\n       "))
     said = [(labels.get(e["oid"], "#" + e["oid"]), m) for e in res["elements"] for m in e.get("pyWarnings") or []]

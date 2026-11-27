@@ -14,6 +14,8 @@ import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 from . import mirror, remote, templates
 from .core import Session
 
@@ -45,12 +47,16 @@ def main():
         where = os.path.expanduser(a["project"])
         if far and not os.path.isabs(where):           # a server folder as typed: from the home folder
             where = os.path.join(os.path.expanduser("~"), where)
-        s = Session(where, python, defer_thumbnails=bool(far and a.get("preview")))
+        s = Session(str(templates.project_root(where)), python, defer_thumbnails=bool(far and a.get("preview")))
         s.on_event = send
         app["s"] = s
         if far:
             s.worker.prepare()
-        return {"ok": True, "project": str(s.project)}
+        return {"ok": True, "project": str(s.project), **templates.marker_state(s.project)}
+
+    def add_marker(a):
+        p = templates.write_marker(need().project)
+        return {"ok": True, "path": str(p)}
 
     def requirements(a):
         from . import requirements as reqs
@@ -110,6 +116,7 @@ def main():
         "open": open_project,
         "close": close,
         "new_project": lambda a: templates.new_project(a["dir"], a.get("journal")),
+        "add_marker": add_marker,
         "requirements": requirements,
         "install": install,
         "install_remote_engine_packages": install_remote_engine_packages,
@@ -135,7 +142,11 @@ def main():
         "paste_figure": lambda a: need().paste_figure(a),
         "delete_figure": lambda a: need().delete_figure(a),
         "new_panel": lambda a: need().new_panel(a),
+        "copy_figure": lambda a: need().copy_figure(a),
+        "paste_figure": lambda a: need().paste_figure(a),
+        "delete_figure": lambda a: need().delete_figure(a),
         "new_table": lambda a: need().new_table(a),
+        "insert_table": lambda a: need().insert_table(a),
         "import_file": lambda a: need().import_file(a),
         # in their order (by publisher), which a JSON object doesn't keep for the app
         "journals": lambda a: {k: {**j, "rank": i} for i, (k, j) in

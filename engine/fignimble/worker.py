@@ -40,7 +40,6 @@ def main():
                                    bleed=float(req.get("bleed") or 0), marks=bool(req.get("marks")))
                 elif cmd == "source_data":
                     from . import sourcedata
-
                     res = sourcedata.export(r, req["file"], req["path"])
                 else:
                     raise ValueError(f"unknown worker command {cmd}")

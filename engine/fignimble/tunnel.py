@@ -40,6 +40,8 @@ import time
 from concurrent.futures import Future
 from pathlib import Path, PureWindowsPath
 
+sys.dont_write_bytecode = True          # nothing written into the app bundle, whose signature it would break
+
 from . import mirror, remote
 
 PACKAGE = Path(__file__).resolve().parent

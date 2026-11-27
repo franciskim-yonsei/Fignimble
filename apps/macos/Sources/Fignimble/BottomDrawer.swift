@@ -101,7 +101,7 @@ final class BottomDrawer: NSView {
 final class CaptionPane: NSView, NSTextViewDelegate {
     weak var main: MainController?
     let text = NSTextView()
-    private let hint = NSTextField(labelWithString: "Type the figure's caption. It is kept in the figure's code as fig.caption(...), goes with the figure into PowerPoint as its alt text, and is never drawn on the figure.")
+    private let hint = NSTextField(labelWithString: CaptionPane.figureHint)
     private var shown = ""
     private var figureName: String?
     private var work: DispatchWorkItem?
@@ -130,7 +130,13 @@ final class CaptionPane: NSView, NSTextViewDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     /// The figure on screen was rendered: show its caption, unless what is typed hasn't been written yet.
-    func set(_ caption: String, figure: String?) {
+    static let figureHint = "Type the figure's caption. It is kept in the figure's code as fig.caption(...), goes with the figure into PowerPoint as its alt text, and is never drawn on the figure."
+    static let tableHint = "A table's caption is its title and notes, drawn with it and exported with it: set them in the inspector (with nothing selected) or in its code (title=, notes=)."
+
+    func set(_ caption: String, figure: String?, table: Bool = false) {
+        text.isEditable = !table
+        hint.stringValue = table ? CaptionPane.tableHint : CaptionPane.figureHint
+        if table { commit(); figureName = figure; shown = ""; text.string = ""; return }
         if figure != figureName { commit(); figureName = figure; shown = caption; text.string = caption; return }
         if work == nil, caption != shown { shown = caption; if text.string != caption { text.string = caption } }
     }

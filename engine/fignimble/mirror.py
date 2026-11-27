@@ -28,6 +28,18 @@ MIRROR_TYPES = {".py", ".csv", ".tsv", ".txt", ".md", ".json", ".toml", ".yaml",
 SKIP_DIRS = {".fignimble", ".git", "__pycache__", ".venv", "venv", "node_modules", ".ipynb_checkpoints"}
 
 
+def outside_stats(files) -> list:
+    """(path, mtime, size) of each file, (path, None, None) for one that is gone: what changes when they do."""
+    out = []
+    for f in files:
+        try:
+            st = os.stat(f)
+            out.append((f, st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((f, None, None))
+    return out
+
+
 def enabled() -> bool:
     return bool(os.environ.get("FIGNIMBLE_REMOTE"))
 

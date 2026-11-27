@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import journals
@@ -32,13 +33,14 @@ fig = Figure(width={width:g}, height={height:g}, style=STYLE)
 '''
 
 
-def table_figure_py(source: str, width: float, height: float) -> str:
-    """A figure that is a table: its cells are in `source` (a CSV in the project)."""
+def table_py(source: str, title: str | None = None) -> str:
+    """A table of the paper, as simple as a table gets: a grid of cells (in `source`, a CSV in the project) with lines
+    between them. A title and notes (title=, notes=) can be added in the inspector or the code."""
+    t = f", title={title!r}" if title else ""
     return f'''from fignimble import *
 from style import STYLE
 
-fig = Figure(width={width:g}, height={height:g}, style=STYLE)
-fig.table("{source}", x=3, y=3, grid=True)
+tab = Table("{source}", style=STYLE, grid=True{t})
 '''
 
 
@@ -125,24 +127,124 @@ def draw(fig, kind="lines"):
 '''
 
 
-def new_project(folder: str, journal: str | None = "nature", poster: str | None = None,
-                landscape: bool = False) -> dict:
-    """A new project folder with a style and a first figure, empty: no panels, nothing from another project.
-    With `poster` (a size: a0, a1, 36x48, ...), the first figure is a poster to start from."""
+DEFAULT_FOLDER = "fignimble"        # a new project's folder unless named otherwise: paper/fignimble/
+
+MARKER = "fignimble.toml"           # at a project's root: says Fignimble made it, which version, and where the root is
+
+
+def _version() -> str:
+    from . import __version__
+    return __version__
+
+
+def marker_text(version: str | None = None) -> str:
+    return (
+        "# A Fignimble project: publication figures written in Python (https://github.com/pachterlab/Fignimble).\n"
+        "# Each top-level .py file is a figure or a table, panels/ holds the code that draws their panels, and\n"
+        "# style.py the look they share. Open this folder in Fignimble, or run `fignimble check` in it.\n"
+        "\n"
+        "[project]\n"
+        f'fignimble = "{version or _version()}"    # the Fignimble version the project was made with\n'
+    )
+
+
+def write_marker(folder, version: str | None = None) -> Path:
+    """Put the marker in a project folder (one already there is left alone)."""
+    p = Path(folder) / MARKER
+    if not p.exists():
+        p.write_text(marker_text(version), encoding="utf-8")
+    return p
+
+
+def read_marker(folder) -> dict | None:
+    """What a project's marker says ({"fignimble": "0.4.0", ...}): {} when nothing in it is readable, None when the
+    folder has no marker."""
+    try:
+        text = (Path(folder) / MARKER).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        import tomllib                                   # Python 3.11+
+    except ImportError:
+        m = re.search(r'^\s*fignimble\s*=\s*"([^"]*)"', text, re.M)
+        return {"fignimble": m.group(1)} if m else {}
+    try:
+        return dict(tomllib.loads(text).get("project") or {})
+    except (tomllib.TOMLDecodeError, AttributeError, TypeError, ValueError):
+        return {}                                        # a mangled marker still marks the project
+
+
+def find_project(path) -> Path | None:
+    """The project a file or folder is in: the nearest folder at or above it with a marker, as git finds .git."""
+    p = Path(path).expanduser().resolve()
+    if not p.is_dir():
+        p = p.parent
+    for d in (p, *p.parents):
+        if (d / MARKER).is_file():
+            return d
+    return None
+
+
+def project_root(path) -> Path:
+    """The folder to open for `path`: itself when it is a project (marked, or figures made before markers), else the
+    marked project it is inside (a panels/ folder, a panel file), else its own folder."""
+    p = Path(path).expanduser().resolve()
+    d = p if p.is_dir() else p.parent
+    if (d / MARKER).is_file() or looks_like_project(d):
+        return d
+    return find_project(d) or d
+
+
+def marker_state(folder) -> dict:
+    """For the app when a project opens: whether it has a marker, the version it names, and whether that version is
+    newer than this Fignimble."""
+    m = read_marker(folder)
+    v = (m or {}).get("fignimble")
+    v = v if isinstance(v, str) else None
+    return {"marker": m is not None, "madeWith": v, "newer": newer_than_installed(v),
+            "version": _version(), "looksLikeProject": m is not None or looks_like_project(folder)}
+
+
+def looks_like_project(folder) -> bool:
+    """A folder of figures made before projects had a marker: it has a style.py or a top-level figure file."""
+    from .srcedit import is_figure_source
     d = Path(folder)
+    if (d / "style.py").is_file():
+        return True
+    for p in d.glob("*.py"):
+        try:
+            if is_figure_source(p.read_text(encoding="utf-8", errors="replace")):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def newer_than_installed(version: str | None) -> bool:
+    """Whether a marker names a newer Fignimble than this one."""
+    def key(v: str):
+        return tuple(int(n) for n in re.findall(r"\d+", v)[:3])
+    return bool(version) and key(version) > key(_version())
+
+
+def new_project(folder: str | None = None, journal: str | None = "nature", poster: str | None = None,
+                landscape: bool = False) -> dict:
+    """A new project folder (`fignimble` unless named) with its marker, a style and a first figure, empty: no
+    panels, nothing from another project. With `poster` (a size: a0, a1, 36x48, ...), the first figure is a poster
+    to start from."""
+    d = Path(folder or DEFAULT_FOLDER)
     if d.exists() and any(p for p in d.iterdir() if not p.name.startswith(".")):
         raise FileExistsError(f"{d} is not empty")
     (d / "panels").mkdir(parents=True, exist_ok=True)
     (d / "images").mkdir(exist_ok=True)
+    write_marker(d)
+    (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
     if poster:
-        text = poster_py(poster, landscape)
-        (d / "poster.py").write_text(text, encoding="utf-8")
-        (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
+        (d / "poster.py").write_text(poster_py(poster, landscape), encoding="utf-8")
         return {"ok": True, "project": str(d.resolve()), "figure": "poster"}
     width = journals.width(journal, "double") if journal else 183
     (d / "style.py").write_text(style_py(journal), encoding="utf-8")
     (d / "fig1.py").write_text(figure_py(width, 100), encoding="utf-8")
-    (d / ".gitignore").write_text(".fignimble/\n", encoding="utf-8")
     return {"ok": True, "project": str(d.resolve()), "figure": "fig1"}
 
 
@@ -159,6 +261,7 @@ Fignimble and is not part of the project; don't edit it.)
 
 ## How a project is laid out
 
+- **`fignimble.toml`** marks the project's top folder and records the Fignimble version that made it. Leave it alone.
 - **Figure files** are the top-level `.py` files that make a `Figure` (`fig1.py`, `fig2.py`, ...). Each places
   elements on its figure, one call per element. Units are **millimeters**, from the figure's **top-left corner, y
   pointing down**.
@@ -204,7 +307,7 @@ use `"white" if is_dark() else "black"` (from fignimble) wherever you would writ
 
 Annotations: `fig.text("**bold** *italic* 10^{3} CD8_{a}", width=60)` (markup; `width` wraps), `fig.arrow(...,
 curve=0.3, tip="stealth")`, `fig.path(points, smooth=True, closed=True, fill=...)`, `fig.scalebar(picture, length=50,
-unit="µm", pixel_size=0.325)`, `fig.zoom(picture, inset, region=(x, y, w, h))` (fractions; the inset of the same
+unit="µm")` (the pixel size from the picture's metadata, or `pixel_size=0.325` from the microscope), `fig.zoom(picture, inset, region=(x, y, w, h))` (fractions; the inset of the same
 picture is cropped to the region). Pictures take `rotation=` and `flip="h"`. `Style(palette={"WT": "#999999", ...})`
 sets the colors panels plot with (or a named one: `palette="okabe-ito"`, color-blind safe); use `color("WT")` in
 panel code rather than repeating hex codes, and keep color-blind readers in mind (`fignimble info` warns about colors
@@ -217,9 +320,23 @@ cleaning data, fitting a model) goes in a function decorated `@cached("data/tabl
 and is kept until its file, its arguments or the listed data change. A rectangle can carry a panel letter
 (`fig.rect(..., label="auto")`), for schematics drawn from shapes and pictures.
 
-Tables: `fig.table("tables/counts.csv", x=4, y=80, decimals=2)` (CSV/TSV in `tables/`, or `rows=[[...], ...]`); keep
-the numbers in the data file, not in the figure. Journals want tables as text: `fignimble table fig1.py 3 table1.docx`
-writes one as a Word table.
+**Tables of the paper** (Table 1, Supplementary Table 2) are files of their own, not figures: `table1.py` makes one
+`Table`, which lays out its title, cells and notes and sizes its page (no positions, no panel letters):
+
+```python
+from fignimble import *
+from style import STYLE
+
+tab = Table("tables/genes.csv", style=STYLE, title="Differentially expressed genes",
+            decimals=[None, 0, 2, 3], notes=["FDR, Benjamini-Hochberg.", "n, cells per gene."])
+```
+
+The cells come from a CSV/TSV in `tables/`, `rows=[[...], ...]`, or a function returning rows or a pandas DataFrame
+(`Table(genes, ...)`, with `@cached` for slow work), so a table computed from data stays tied to it: prefer that to
+pasting numbers. Headers carry units; `decimals=` rounds each column alike. Journals want tables as text:
+`fignimble export table1.py table1.docx` writes a Word table with the title and notes (also .xlsx, .csv, .tsv). To
+show a table in a figure or poster, place it whole: `fig.figure("table1.py", ...)`. Only a small table that is part of
+a figure goes in the figure itself: `fig.table("tables/counts.csv", x=4, y=80)`.
 
 **Figures inside figures, and posters.** `fig.figure("fig2.py", x=20, y=130, w=360)` places another figure of the
 project whole, drawn from its code (scaled to `w`, text and lines with it; `letters=False` drops its panel letters,
@@ -245,6 +362,10 @@ for every argument.
   version, `--journal cell` for that journal's resolutions; TIFF/JPEG are raised to them and every export is measured).
   Don't run other renderers. Each export records what it was made from; `fignimble provenance fig1.pdf` checks it
   against the project.
+- `fignimble source-data fig1.py` writes the values plotted in each panel to `fig1_source_data.xlsx`, one sheet per
+  panel, as journals ask. A panel whose plotted values can't be read back (shaded areas, violins, huge heatmaps)
+  supplies them with a `source_data(...)` function next to `draw` (`<name>_source_data` for a panel function
+  `<name>`), taking the same arguments and returning a DataFrame, a dict of them, or rows.
 
 ## Keep the figures editable by hand
 

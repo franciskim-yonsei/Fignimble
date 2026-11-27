@@ -14,6 +14,7 @@ From the menus of Fignimble (generated from the app's menu definitions).
 |---|---|
 | New Project | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd> |
 | New Figure | <kbd>⌘</kbd><kbd>N</kbd> |
+| New Table | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
 | Open Project | <kbd>⌘</kbd><kbd>O</kbd> |
 | Open Project on SSH Server | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>O</kbd> |
 | Apply Code Changes | <kbd>⌘</kbd><kbd>S</kbd> |
@@ -42,10 +43,9 @@ From the menus of Fignimble (generated from the app's menu definitions).
 |---|---|
 | New Panel from Code | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>P</kbd> |
 | Picture | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>I</kbd> |
-| New Table | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
 | BioCartoon Icons | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>B</kbd> |
 
-**Insert ▸ Figure…** and **QR Code…** have no shortcut.
+**Insert ▸ Figure…**, **Table…** and **QR Code…** have no shortcut.
 
 ## Object
 

@@ -12,10 +12,9 @@ from __future__ import annotations
 import datetime as _dt
 import math
 import runpy
-import tempfile
 import zipfile
 from pathlib import Path
-from xml.sax.saxutils import escape, quoteattr
+from xml.sax.saxutils import escape
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -295,7 +294,7 @@ def _data_fn(props, renderer):
     return fn if callable(fn) else None
 
 
-def panel_blocks(renderer, job, rc) -> tuple[list, list[str], str]:
+def panel_blocks(renderer, job) -> tuple[list, list[str], str]:
     """(blocks, notes, how) for one panel job of the last render: its own source data, or read from its drawing."""
     props = job["props"]
     try:
@@ -307,7 +306,7 @@ def panel_blocks(renderer, job, rc) -> tuple[list, list[str], str]:
         draw = renderer._panel_fn(props, fn, path)
         w, h = job["size"]
         import matplotlib
-        with matplotlib.rc_context(rc):
+        with matplotlib.rc_context(renderer.rc):
             fig = plt.figure(figsize=(w / 25.4, h / 25.4))
             try:
                 api._DARK[0] = False
@@ -388,7 +387,7 @@ def write_workbook(sheets: list, path, title: str, font: str = "Arial") -> str:
         'spreadsheetml.worksheet+xml"/>', ct)
     wb = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.'
           'org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-          '<sheets>' + "".join(f'<sheet name={quoteattr(n)} sheetId="{i}" r:id="rId{i}"/>'
+          '<sheets>' + "".join(f'<sheet name="{escape(n)}" sheetId="{i}" r:id="rId{i}"/>'
                                for i, n in enumerate(names, 1)) + '</sheets></workbook>')
     n = len(sheets)
     rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.'
@@ -397,18 +396,15 @@ def write_workbook(sheets: list, path, title: str, font: str = "Arial") -> str:
                       f'relationships/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1, n + 1))
             + f'<Relationship Id="rId{n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
               f'relationships/styles" Target="styles.xml"/></Relationships>')
-    with tempfile.TemporaryDirectory(dir=path.parent, prefix=".fignimble-workbook-") as folder:
-        temporary = Path(folder) / "workbook.xlsx"
-        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr("[Content_Types].xml", content_types)
-            z.writestr("_rels/.rels", tables._XRELS)
-            z.writestr("docProps/core.xml", tables._CORE.format(title=escape(title)))
-            z.writestr("xl/workbook.xml", wb)
-            z.writestr("xl/_rels/workbook.xml.rels", rels)
-            z.writestr("xl/styles.xml", _STYLES.format(font=escape(font, {'"': "&quot;"})))
-            for i, (_, rows, styles) in enumerate(sheets, 1):
-                z.writestr(f"xl/worksheets/sheet{i}.xml", _sheet_xml(rows, styles))
-        temporary.replace(path)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", tables._XRELS)
+        z.writestr("docProps/core.xml", tables._CORE.format(title=escape(title)))
+        z.writestr("xl/workbook.xml", wb)
+        z.writestr("xl/_rels/workbook.xml.rels", rels)
+        z.writestr("xl/styles.xml", _STYLES.format(font=escape(font)))
+        for i, (_, rows, styles) in enumerate(sheets, 1):
+            z.writestr(f"xl/worksheets/sheet{i}.xml", _sheet_xml(rows, styles))
     return str(path.resolve())
 
 
@@ -433,18 +429,17 @@ def _panel_sheet(name: str, where: str, blocks: list, notes: list, how: str) -> 
 def export(renderer, file: str, path: str) -> dict:
     """Write the source data of figure `file` to `path` (.xlsx): {path, sheets, panels: [{panel, sheet, how, blocks}]}."""
     from .render import provenance_line
-    renderer.dark = False
     fig = renderer.run_figure(file)
     fpath = renderer.resolve(file)
-    panels = {}
-    renderer._stack, renderer.used, renderer.source_data_panels = [fpath], {fpath}, panels
-    try:
-        _, infos, labels = renderer.pieces(fig)
-    finally:
-        renderer.source_data_panels = None
+    if isinstance(fig, api.Table):
+        raise ValueError(f"{Path(fpath).name} is a table: its cells are its data; export it as Excel with File ▸ Export "
+                         f"Table… or `fignimble export {Path(fpath).name} {Path(fpath).stem}.xlsx`")
+    renderer._stack, renderer.used, renderer.nested = [fpath], {fpath}, {}
+    pieces, infos, labels = renderer.pieces(fig)
     letters = {l["panel"]: l["text"] for l in labels}
-    jobs, rc = panels.pop(None)
-    jobs.sort(key=lambda j: (letters.get(j["oid"]) is None, letters.get(j["oid"]) or "", j["oid"]))
+    by_oid = {i["oid"]: i for i in infos}
+    jobs = sorted(renderer.jobs, key=lambda j: (letters.get(j["oid"]) is None, letters.get(j["oid"]) or "", j["oid"]))
+    rc = renderer.rc
     sheets, report = [], []
     for j in jobs:
         letter = letters.get(j["oid"])
@@ -452,19 +447,22 @@ def export(renderer, file: str, path: str) -> dict:
         src = j["props"]["source"]
         where = src.__name__ if callable(src) else (src + ("" if j["props"]["function"] == "draw"
                                                            else f", {j['props']['function']}()"))
-        blocks, notes, how = panel_blocks(renderer, j, rc)
+        renderer.rc = rc
+        blocks, notes, how = panel_blocks(renderer, j)
         sheets.append(_panel_sheet(name, where, blocks, notes, how))
         report.append({"panel": letter or j["oid"], "sheet": name, "how": how, "blocks": len(blocks)})
-    for oid, (fname, sjobs, src_rc, slabels) in panels.items():
+    for oid, (fname, sjobs, src_rc, slabels) in renderer.nested.items():
         outer = letters.get(oid)
         sl = {l["panel"]: l["text"] for l in slabels}
         for j in sorted(sjobs, key=lambda j: (sl.get(j["oid"]) or "", j["oid"])):
             inner = sl.get(j["oid"]) or j["oid"]
             name = f"{fname} {inner}" if not outer else f"Panel {outer} ({inner})"
-            blocks, notes, how = panel_blocks(renderer, j, src_rc)
+            renderer.rc = src_rc
+            blocks, notes, how = panel_blocks(renderer, j)
             sheets.append(_panel_sheet(name, f"panel {inner} of {fname}, placed whole", blocks, notes, how))
             report.append({"panel": name, "sheet": name, "how": how, "blocks": len(blocks)})
-    pictures = any(i["kind"] in ("image", "inset") for i in infos)
+    renderer.rc = rc
+    pictures = [i for i in infos if i["kind"] in ("image", "inset") and i["oid"] in by_oid]
     about = [["Source data"], [f"Figure: {Path(fpath).name}"]]
     try:
         about.append([provenance_line(renderer.provenance(file))])

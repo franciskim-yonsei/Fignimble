@@ -269,6 +269,7 @@ final class Inspector: NSView {
 
     private func figureSection(_ f: FigureData) {
         guard let m = main else { return }
+        if f.isTable { tableSection(f); return }
         section("Figure · \(f.name)")
         pageSizeRow(f)
         if let p = f.poster { posterSection(f, p) }
@@ -347,6 +348,27 @@ final class Inspector: NSView {
     }
 
     /// The page's width and height, in the units picked (mm, cm, in, ft; the code keeps millimeters).
+    /// A Table with nothing selected: its title, notes and the style's type, and how to send it to the journal.
+    private func tableSection(_ f: FigureData) {
+        guard let m = main, let cells = f.tableCells else { return }
+        let set = { (props: [String: Any]) in m.edit(["op": "set", "oid": cells.oid, "props": props]) }
+        let part = { (role: String) in f.elements.first { $0.role == role }?.s("text") ?? "" }
+        section("Table · \(f.name)")
+        note("A table of the paper: numbered apart from the figures, and sent to the journal as an editable Word or Excel table (File ▸ Export Table…). Its page is sized to its title, cells and notes.")
+        row([("Title", Field(part("title"), width: 200) { set(["title": $0]) })])
+        if part("notes").contains("\n") {
+            note("Notes: " + part("notes").replacingOccurrences(of: "\n", with: " · "))
+            row([("", button("Edit Notes in Code", symbol: "doc.text") { m.showCode(of: cells) })])
+        } else {
+            row([("Notes", Field(part("notes"), width: 200) { set(["notes": $0]) })])
+        }
+        row([("", button("Export Table…", symbol: "square.and.arrow.up") { m.exportTable(nil) })])
+        section("Style (every figure and table)")
+        let st = f.style
+        row([("Font", fontPicker(st["font"] as? String ?? "Arial") { if let v = $0 { m.edit(["op": "style", "props": ["font": v]]) } })])
+        row([("Text", numberField(num(st["size"])) { m.edit(["op": "style", "props": ["size": $0]]) }), ("pt", NSView())])
+    }
+
     private func pageSizeRow(_ f: FigureData) {
         guard let m = main else { return }
         let units = MainController.sizeUnits
@@ -401,10 +423,12 @@ final class Inspector: NSView {
         case "bracket":
             row([("X1", numberField(e.p("x1"), width: 48, set("x1"))), ("X2", numberField(e.p("x2"), width: 48, set("x2")))])
             row([("Y", numberField(e.p("y"), width: 48, set("y"))), ("Tick", numberField(e.p("tick"), width: 40, set("tick"))), ("mm", NSView())])
+        case "text" where e.role != nil:
+            break                                       // a table's title and notes go where the table puts them
         case "text":
             row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
         case "table":
-            row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())])
+            if e.role == nil { row([("X", numberField(e.p("x"), set("x"))), ("Y", numberField(e.p("y"), set("y"))), ("mm", NSView())]) }
             row([("W", numberField(Double(e.box.width), set("w"))), ("mm (never narrower than its text)", NSView())])
         case "path", "zoom", "scalebar", "legend":
             let b = e.box
@@ -588,7 +612,18 @@ final class Inspector: NSView {
         case "scalebar":
             section("Scale bar")
             row([("Length", numberField(e.p("length"), width: 50) { setp(["length": $0]) }), ("", Field(e.s("unit") ?? "µm", width: 40) { setp(["unit": $0]) })])
-            row([("One pixel is", numberField(e.p("pixel_size"), width: 60) { setp(["pixel_size": $0]) }), (e.s("unit") ?? "µm", NSView())])
+            // empty: the picture's metadata gives the pixel size
+            let px = Field(e.p("pixel_size").map { String(format: "%g", $0) } ?? "", width: 60) { s in
+                let t = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+                if t.isEmpty { setp(["pixel_size": NSNull()]) } else if let d = Double(t) { setp(["pixel_size": d]) }
+            }
+            if e.p("pixel_size") == nil, let v = e.pixelSize, e.pixelFrom != "not set" { px.placeholderString = String(format: "%g", v) }
+            row([("One pixel is", px), (e.s("unit") ?? "µm", NSView())])
+            switch e.pixelFrom {
+            case "not set"?: note("No pixel size: the picture's metadata has none. Enter it from the microscope.")
+            case let f? where f.hasPrefix("from "): note("Pixel size \(f). Type a number to override it.")
+            default: break
+            }
             row([("Corner", popup(["lower right", "lower left", "upper right", "upper left"], e.s("corner"), width: 110) { _, t in
                 setp(["corner": t, "x": NSNull(), "y": NSNull()]) })])
             row([("Color", color(e.s("color")) { setp(["color": $0]) }), ("", check("Label", e.props["label"] as? Bool ?? true) { setp(["label": $0]) })])
@@ -599,8 +634,17 @@ final class Inspector: NSView {
             if e.kind == "rect" { row([("Corner radius", numberField(e.p("radius") ?? 0, width: 40) { setp(["radius": $0]) }), ("mm", NSView())]) }
             row([("Opacity", numberField((e.p("opacity") ?? 1) * 100, width: 40) { setp(["opacity": max(0, min(1, $0 / 100))]) }), ("%", NSView())])
             if e.kind == "rect" { panelLabelRows(f, e) }        // a schematic's background can carry its letter
+        case "text" where e.role != nil:
+            section(e.role == "title" ? "Table title" : "Table notes")
+            if (e.s("text") ?? "").contains("\n") {
+                note((e.s("text") ?? "").replacingOccurrences(of: "\n", with: " · "))
+                row([("", button("Edit in Code", symbol: "doc.text") { m.showCode(of: e) })])
+            } else {
+                add(Field(e.s("text") ?? "", width: 220) { setp(["text": $0]) })
+            }
+            note("Set in the table's code (\(e.role!)=). Its type follows the style; its place follows the table.")
         case "table":
-            if f.isTableFigure {
+            if f.isTableFigure && !f.isTable {
                 section("Page")
                 pageSizeRow(f)
                 row([("", button("Fit Page to Table", symbol: "arrow.up.left.and.arrow.down.right") { m.edit(["op": "fit_figure", "margin": 3]) })])
@@ -847,7 +891,9 @@ final class FontPicker: NSComboBox, NSComboBoxDelegate {
     private var commit: ((String?) -> Void)?
     private var initial = ""
     private var blank: String?
-    static let families: [String] = NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") }.sorted()
+    // with Office's cloud fonts by their own names: macOS lists Aptos Display as part of Aptos, matplotlib knows it apart
+    static let families: [String] = Array(Set(NSFontManager.shared.availableFontFamilies.filter { !$0.hasPrefix(".") }
+                                              + OfficeFonts.cloudFamilies())).sorted()
 
     convenience init(_ value: String?, blank: String?, width: CGFloat, commit: @escaping (String?) -> Void) {
         self.init(frame: .zero)

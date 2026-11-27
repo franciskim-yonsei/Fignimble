@@ -48,6 +48,11 @@ def _number(s) -> float | None:
         return None
 
 
+def _numeric(s: str) -> bool:
+    """A number, or a bound on one ("< 0.001", "≥ 10"), which lines up with the numbers of its column."""
+    return _number(s) is not None or _number(str(s).strip().lstrip("<>≤≥~±").strip()) is not None
+
+
 def cells(rows: list, header: bool = True, decimals=None) -> tuple[list[list[str]], list[str]]:
     """The rows as the strings shown, padded to one width, and each column's alignment: "r" when every body cell
     is a number, else "l". `decimals` rounds numbers that have decimals (whole numbers stay whole): one number
@@ -67,9 +72,41 @@ def cells(rows: list, header: bool = True, decimals=None) -> tuple[list[list[str
                 row.append("" if c is None else str(c))
         out.append(row)
     body = out[1:] if header else out
-    align = ["r" if body and all(_number(r[j]) is not None or not r[j].strip() for r in body)
+    align = ["r" if body and all(_numeric(r[j]) or not r[j].strip() for r in body)
              and any(r[j].strip() for r in body) else "l" for j in range(n)]
     return out, align
+
+
+def check(rows: list, header: bool = True, decimals=None) -> list[dict]:
+    """What a copy editor would query in a table: numbers that round to zero as shown, columns whose numbers are
+    shown with different numbers of decimals, a header cell left empty above a column with values."""
+    shown, _ = cells(rows, header, decimals)
+    if not shown:
+        return []
+    head = shown[0] if header else None
+    body = shown[1:] if header else shown
+    out = []
+    n = max(len(r) for r in shown)
+
+    def name(j):
+        return f"column “{head[j]}”" if head and head[j].strip() else f"column {j + 1}"
+
+    for j in range(n):
+        col = [(i, r[j]) for i, r in enumerate(body) if j < len(r) and r[j].strip()]
+        nums = [(i, c) for i, c in col if _number(c) is not None]
+        if not nums or len(nums) < len(col):
+            continue
+        zero = [c for i, c in nums if _number(c) == 0 and _number(rows[i + (1 if header else 0)][j]) not in (0, None)]
+        if zero:
+            out.append({"level": "warning", "message": f"{name(j)}: a value shows as {zero[0]} but isn't zero; give "
+                                                        "it more decimals, or write it as < 0.001 or in E notation"})
+        places = {len(c.split(".")[1]) if "." in c and "e" not in c.lower() else 0 for _, c in nums}
+        if len(places) > 1 and any(p > 0 for p in places):
+            out.append({"level": "info", "message": f"{name(j)} shows numbers with {min(places)} to {max(places)} "
+                                                    "decimals; decimals= rounds them alike"})
+        if head is not None and j < len(head) and not head[j].strip():
+            out.append({"level": "info", "message": f"column {j + 1} has no header"})
+    return out
 
 
 def resolve_align(align, auto: list[str]) -> list[str]:
@@ -103,10 +140,11 @@ _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def write_docx(rows: list, path: str | Path, header: bool = True, decimals=None, align=None,
-               font: str = "Arial", size: float = 7, title: str | None = None, grid: bool = False) -> str:
+               font: str = "Arial", size: float = 7, title: str | None = None, grid: bool = False,
+               notes: str | None = None) -> str:
     """Write the table to a Word file: a real table (editable in Word), the figure's font and size, the header
     bold, a rule above and below the header and one at the bottom (`grid`: lines between every row and column and
-    around the table). `title` goes above it as a paragraph."""
+    around the table). `title` goes above it as a paragraph, `notes` below it, a paragraph per line."""
     shown, auto = cells(rows, header, decimals)
     al = resolve_align(align, auto)
     half = max(2, int(round(size * 2)))                     # Word sizes are in half points
@@ -147,6 +185,8 @@ def write_docx(rows: list, path: str | Path, header: bool = True, decimals=None,
         tbl.append("".join(tr) + "</w:tr>")
     tbl.append("</w:tbl>")
     body.append("".join(tbl))
+    for line in (notes or "").splitlines():
+        body.append(para(line))
     body.append('<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
                 '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
     doc = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="{_W}"><w:body>'
@@ -208,10 +248,12 @@ def _col(j: int) -> str:
 
 
 def write_xlsx(rows: list, path: str | Path, header: bool = True, decimals=None, font: str = "Arial",
-               title: str | None = None) -> str:
+               title: str | None = None, notes: str | None = None) -> str:
     """Write the table to an Excel workbook: numbers as numbers (rounded as on the figure), the header bold with
-    rules above and below it."""
+    rules above and below it; `notes` in the rows after it, below an empty one."""
     shown, _ = cells(rows, header, decimals)
+    if notes:
+        shown = shown + [[""]] + [[line] for line in notes.splitlines()]
     out = []
     for i, r in enumerate(shown):
         head = header and i == 0
@@ -226,7 +268,8 @@ def write_xlsx(rows: list, path: str | Path, header: bool = True, decimals=None,
                 cs.append(f'<c r="{ref}"{st} t="inlineStr"><is><t xml:space="preserve">{escape(c)}</t></is></c>')
         out.append(f'<row r="{i + 1}">{"".join(cs)}</row>')
     n = max((len(r) for r in shown), default=1)
-    widths = [min(60, max(8, max((len(r[j]) for r in shown), default=0) + 2)) for j in range(n)]
+    widths = [min(60, max(8, max((len(r[j]) for r in shown if j < len(r) and (not notes or len(r) > 1)),
+                                 default=0) + 2)) for j in range(n)]
     cols = "<cols>" + "".join(f'<col min="{j + 1}" max="{j + 1}" width="{w}" customWidth="1"/>'
                               for j, w in enumerate(widths)) + "</cols>"
     sheet = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -248,15 +291,15 @@ def write_xlsx(rows: list, path: str | Path, header: bool = True, decimals=None,
 
 def write_table(rows: list, path: str | Path, fmt: str | None = None, header: bool = True, decimals=None,
                 align=None, font: str = "Arial", size: float = 7, title: str | None = None,
-                grid: bool = False) -> str:
+                grid: bool = False, notes: str | None = None) -> str:
     """The table as a file people edit: .docx (a Word table), .xlsx (an Excel sheet), .csv or .tsv (the cells as
-    shown, rounded as on the figure)."""
+    shown, rounded as on the figure; without the title and notes)."""
     fmt = (fmt or Path(path).suffix.lstrip(".")).lower()
     if fmt == "docx":
         return write_docx(rows, path, header=header, decimals=decimals, align=align, font=font, size=size, title=title,
-                          grid=grid)
+                          grid=grid, notes=notes)
     if fmt == "xlsx":
-        return write_xlsx(rows, path, header=header, decimals=decimals, font=font, title=title)
+        return write_xlsx(rows, path, header=header, decimals=decimals, font=font, title=title, notes=notes)
     if fmt in ("csv", "tsv"):
         shown, _ = cells(rows, header, decimals)
         path = Path(path)
@@ -264,3 +307,32 @@ def write_table(rows: list, path: str | Path, fmt: str | None = None, header: bo
         path.write_text(write_delimited(shown, "\t" if fmt == "tsv" else ","), encoding="utf-8")
         return str(path.resolve())
     raise ValueError(f"a table can't be written as {fmt}: use docx, xlsx, csv or tsv")
+
+
+TABLE_FORMATS = ("docx", "xlsx", "csv", "tsv")
+
+
+def write_rendered(data: dict, path: str | Path, fmt: str | None = None, oid=None, title: str | None = None) -> str:
+    """Write a table of a render (`Renderer.render`'s result) as a file people edit. Without `oid`: the figure's only
+    table. A Table's title and notes come with it (`title` replaces the title)."""
+    found = [e for e in data["elements"] if e["kind"] == "table"]
+    if oid is not None:
+        found = [e for e in data["elements"] if str(e["oid"]) == str(oid) or e["props"].get("name") == oid]
+        if not found:
+            raise ValueError(f"there is no element {oid}")
+        if found[0]["kind"] != "table":
+            raise ValueError("only a table can be exported as a Word, Excel, CSV or TSV file")
+    if not found:
+        raise ValueError("this figure has no table")
+    if len(found) > 1:
+        raise ValueError("this figure has more than one table; say which (its element number, as fignimble info "
+                         "shows it, or its name)")
+    p = found[0]["props"]
+    if p.get("cells") is None:
+        raise ValueError("the table didn't draw; fix it first")
+    parts = {e["props"].get("role"): e["props"].get("text") for e in data["elements"] if e.get("method") == "Table"}
+    st = data["style"]["props"]
+    return write_table(p["cells"], path, fmt, header=p.get("header", True), decimals=p.get("decimals"),
+                       align=p.get("align"), font=p.get("font") or st.get("font") or "Arial",
+                       size=p.get("size") or st.get("size") or 7, title=title or parts.get("title"),
+                       grid=bool(p.get("grid")), notes=parts.get("notes"))

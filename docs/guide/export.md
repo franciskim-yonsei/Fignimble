@@ -12,8 +12,12 @@ the element.
 - pictures below the minimum resolution at their printed size;
 - Type 3 fonts, which journals reject;
 - elements and letters reaching outside the figure;
-- two panels with the same letter;
-- colors color-blind readers confuse;
+- two panels with the same letter, a panel that draws its own letter as well (in its code or picture), and a
+  letter typed in as text;
+- panels that overlap (an inset belongs in `fig.inset`);
+- text in a panel or picture in a font other than the style's;
+- colors color-blind readers confuse, and (as notes) colors that print alike in grayscale;
+- scale bars without a pixel size, or with one that disagrees with the picture's metadata;
 - a figure width that isn't one of the journal's columns;
 - panels whose code fails, with the error, and what to do when a package is missing.
 
@@ -28,7 +32,7 @@ the element.
 | PDF, EPS, SVG | vector, with real, editable TrueType text |
 | TIFF (LZW), PNG, JPEG | pixels, at the resolution you set |
 | PowerPoint (.pptx) | a 16:9 slide with the figure at its real size (scaled down if it doesn't fit), as a PNG with a vector copy that PowerPoint 2019 and later show instead; the caption becomes its alt text. A poster goes on a slide of its own size |
-| Word (.docx), Excel (.xlsx), CSV, TSV | for a figure that is a table: the table as text |
+| Word (.docx), Excel (.xlsx), CSV, TSV | for a table: its cells as text (Word and Excel with its title and notes) |
 
 The dialog asks which journal's rules to meet and the resolution, from 300 to 2400 dpi. It starts at **General**
 (300 dpi for photographs, 600 for pictures with text, 1200 for line art); pick a journal when the figure goes to it.
@@ -82,8 +86,33 @@ selected) puts the whole figure on the clipboard as vector PDF and a 600 dpi PNG
 Illustrator, mail or chat. Copy and paste also move elements between figures, and a picture pasted from another app is
 saved into `images/`.
 
+## Source data
+
+Many journals ask for the values behind each figure. **File ▸ Export Source Data…** writes them to an Excel workbook:
+a first sheet saying what it is (the figure, and the git commit it was made at), then one sheet per panel, named by its
+letter (`fignimble source-data fig1.py` writes `fig1_source_data.xlsx`).
+
+Fignimble draws each panel again and reads back what it drew: lines and points (x and y, under the axis labels),
+scatter points with the value their color shows, bars with their error bars (named by their tick labels, `WT`, `KO`,
+...), error bars, heatmaps (rows and columns named by their tick labels), segments and pie wedges. Panels of a figure
+placed whole get sheets of their own. What can't be read back as numbers, a shaded area, a violin, or a heatmap of
+more than 250,000 values, is noted on the panel's sheet, and pictures have no plotted values.
+
+A panel can supply its own source data instead, the data it was drawn from, with a function next to `draw`:
+
+```python
+def draw(fig, genes=("GAPDH", "CD3E")):
+    ...
+
+def source_data(genes=("GAPDH", "CD3E")):        # the same arguments as draw
+    return load_expression()[list(genes)]         # a DataFrame, a dict of DataFrames (one table each), or rows
+```
+
+For a panel function other than `draw`, name it `<name>_source_data`.
+
 ## Tables
 
-Journals want tables as text: **File ▸ Export Table…** writes a table of the figure as an editable Word table, an
-Excel sheet, or a CSV or TSV file.
+Journals want tables as text: **File ▸ Export Table…** writes a table (a `Table` file, or a table drawn in a
+figure) as an editable Word table, with its title and notes, an Excel sheet, or a CSV or TSV file;
+`fignimble export table1.py table1.docx` does it from a terminal.
 See [tables](annotating.md#tables).

@@ -370,15 +370,20 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         if code.dirty { code.save() }
         enqueue { [self] in
             guard useEngine(for: nil) else { return }
+            let r: [String: Any]
             do {
-                let r = try await engine.json("open", ["project": dir.path])
+                r = try await engine.json("open", ["project": dir.path])
                 project = r["project"] as? String ?? dir.path
             } catch { alert("Couldn't open \(dir.lastPathComponent)", error.localizedDescription); return }
+            // the engine opens the project a folder is in (a panels/ folder, a panel file: up to its fignimble.toml)
+            let root = URL(fileURLWithPath: project ?? dir.path)
+            if root.path != dir.path { fig = nil }
             remote = nil
-            MainController.noteRecent(project ?? dir.path)
-            NSDocumentController.shared.noteNewRecentDocumentURL(dir)
-            window.representedURL = dir
-            await opened(title: dir.lastPathComponent, figure: fig)
+            MainController.noteRecent(root.path)
+            NSDocumentController.shared.noteNewRecentDocumentURL(root)
+            window.representedURL = root
+            await opened(title: root.lastPathComponent, figure: fig)
+            checkMarker(r)
         }
     }
 
@@ -397,9 +402,11 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             busy("Connecting to \(r.host)…")
             remoteNeeds = nil
             guard useEngine(for: r) else { idle(); return }
+            var opening: [String: Any] = [:]
             do {
                 let res = try await engine.json("open", ["project": r.mirror])
                 project = res["project"] as? String ?? r.mirror
+                opening = res
             } catch {
                 idle()
                 engine.shutdown(wait: 2)                  // the tunnel that couldn't start the engine there
@@ -413,6 +420,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             MainController.noteRecent(r.recentKey)
             window.representedURL = nil
             await opened(title: r.title, figure: fig)
+            checkMarker(opening)
         }
     }
 
@@ -454,6 +462,34 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         fitWindowToScreen()
         explainProjectOnce()
         checkPackages(asked: false)
+    }
+
+    /// A project's fignimble.toml, which says at a glance that Fignimble made the folder and which version: offered
+    /// (once per project) for folders of figures made before projects had one, and a warning when it names a newer
+    /// Fignimble than this one.
+    func checkMarker(_ r: [String: Any]) {
+        guard let p = project, ProcessInfo.processInfo.environment["FIGNIMBLE_SHOTS"] == nil else { return }
+        if r["newer"] as? Bool == true {
+            toast("This project was made with Fignimble \(r["madeWith"] as? String ?? "") and this is \(r["version"] as? String ?? "an older one"): update Fignimble if something doesn't draw", error: true)
+            return
+        }
+        guard r["marker"] as? Bool == false, r["looksLikeProject"] as? Bool == true else { return }
+        var seen = UserDefaults.standard.stringArray(forKey: "markerOffered") ?? []
+        guard !seen.contains(p) else { return }
+        seen.append(p)
+        UserDefaults.standard.set(Array(seen.suffix(100)), forKey: "markerOffered")
+        enqueue { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            a.messageText = "Mark this folder as a Fignimble project?"
+            a.informativeText = "Fignimble can add a small file, fignimble.toml, to \((p as NSString).lastPathComponent). It tells anyone "
+                + "looking at the folder (or its repository) that its figures are made with Fignimble, and which version. "
+                + "Fignimble and the fignimble command also use it to find the project from any folder inside it."
+            a.addButton(withTitle: "Add fignimble.toml"); a.addButton(withTitle: "Not Now")
+            guard await a.beginSheetModal(for: self.window) == .alertFirstButtonReturn else { return }
+            if (try? await self.engine.json("add_marker")) != nil { self.toast("Added fignimble.toml") }
+            else { self.toast("Couldn't add fignimble.toml", error: true) }
+        }
     }
 
     @objc func checkPackagesNow(_ sender: Any?) { checkPackages(asked: true) }
@@ -520,7 +556,18 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     func refreshState() async {
         guard project != nil, let s = try? await engine.json("state") else { return }
         state = s
+        let before = figures.firstIndex { $0["name"] as? String == current }
         figures = s["figures"] as? [[String: Any]] ?? []
+        // the figure on screen is gone (deleted, cut, a New Figure undone): the one next to it in the list instead
+        if let c = current, !figures.contains(where: { $0["name"] as? String == c }) {
+            current = nil; figure = nil; canvas.selection = []
+            if let n = (figures.isEmpty ? nil : figures[min(before ?? 0, figures.count - 1)])?["name"] as? String {
+                enqueue { [self] in await load(n) }
+            } else {
+                canvas.setFigure(nil); navigator.setLayers(nil, selection: []); inspector.update(); code.clear()
+                status.stringValue = "No figures yet: File ▸ New Figure (⌘N)."
+            }
+        }
         history.set(done: s["history"] as? [String] ?? [], undone: s["future"] as? [String] ?? [])
         navigator.setFigures(figures, current: current)
         var files: [String] = []
@@ -566,7 +613,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         canvas.setFigure(f)
         navigator.setLayers(f, selection: canvas.selection)
         problems.set(f.warnings)
-        captionPane.set(f.caption, figure: f.name)
+        captionPane.set(f.caption, figure: f.name, table: f.isTable)
         drawer.rebuildStrip()
         inspector.update()
         hRuler.needsDisplay = true; vRuler.needsDisplay = true
@@ -906,8 +953,9 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             toast("Select a picture (PNG, TIFF or JPEG) for the scale bar", error: true); return
         }
         let a = NSAlert(); a.messageText = "Scale bar"
-        a.informativeText = "How long the bar is, and how big one pixel of the original picture is (from the microscope's metadata)."
-        let len = NSTextField(string: "50"), unit = NSTextField(string: "µm"), px = NSTextField(string: "0.325")
+        a.informativeText = "How long the bar is, and how big one pixel of the original picture is. Leave the pixel size empty to read it from the picture's metadata (OME-TIFF, ImageJ); preflight warns if there is none."
+        let len = NSTextField(string: "50"), unit = NSTextField(string: "µm"), px = NSTextField(string: "")
+        px.placeholderString = "from file"
         for f in [len, unit, px] { f.widthAnchor.constraint(equalToConstant: 80).isActive = true }
         let grid = NSGridView(views: [[NSTextField(labelWithString: "Length"), len], [NSTextField(labelWithString: "Unit"), unit],
                                       [NSTextField(labelWithString: "One pixel is"), px]])
@@ -915,8 +963,9 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         a.accessoryView = grid; a.addButton(withTitle: "Add"); a.addButton(withTitle: "Cancel")
         a.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn else { return }
-            self?.edit(["op": "add_scalebar", "oid": oid, "props": ["length": Double(len.stringValue) ?? 50, "unit": unit.stringValue,
-                                                                     "pixel_size": Double(px.stringValue) ?? 1]])
+            var props: [String: Any] = ["length": Double(len.stringValue) ?? 50, "unit": unit.stringValue]
+            if let d = Double(px.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")) { props["pixel_size"] = d }
+            self?.edit(["op": "add_scalebar", "oid": oid, "props": props])
         }
     }
 
@@ -1120,7 +1169,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     @objc func newProject(_ sender: Any?) {
         let p = NSSavePanel()
         p.message = "A new folder for the project's figures, panels and pictures"
-        p.nameFieldStringValue = "figures"
+        p.nameFieldStringValue = "fignimble"            // the convention: paper/fignimble/, marked by its fignimble.toml
         let journal = NSPopUpButton(frame: .zero, pullsDown: false)
         journal.menu?.addItem(withTitle: "No journal", action: nil, keyEquivalent: "")
         journal.menu?.addItem(.separator())
@@ -1631,8 +1680,10 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         case #selector(toggleSidebar(_:)): item.title = navigator.isHidden ? "Show Figures and Layers" : "Hide Figures and Layers"
         case #selector(toggleInspector(_:)): item.title = rightHost.isHidden ? "Show Inspector" : "Hide Inspector"
         case #selector(labelsNone(_:)): item.state = figure?.labelStyle["numbering"] as? String == "none" ? .on : .off; return figure != nil
-        case #selector(exportTable(_:)): return (sel.count == 1 && figure?.element(sel[0])?.kind == "table") || figure?.isTableFigure == true
-        case #selector(insertTable(_:)), #selector(insertRemotePanel(_:)): return figure != nil
+        case #selector(exportSourceData(_:)): return figure != nil && figure?.isTableFigure != true
+        case #selector(exportTable(_:)): return (sel.count == 1 && figure?.element(sel[0])?.kind == "table") || figure?.tableCells != nil
+        case #selector(insertTable(_:)): return figure != nil && figure?.isTable == false
+        case #selector(insertRemotePanel(_:)): return figure != nil
         case #selector(newTable(_:)): return project != nil
         case #selector(toggleLabelAlign(_:)): item.state = (figure?.labelStyle["align"] as? Bool ?? true) ? .on : .off; return figure != nil
         case #selector(toggleLabelOrder(_:)): item.state = (figure?.labelStyle["order"] as? String) == "source" ? .on : .off; return figure != nil
@@ -1669,6 +1720,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
              #selector(labelsOutside(_:)), #selector(labelsInside(_:)), #selector(labelJournal(_:)), #selector(refreshFigure(_:)),
              #selector(showBioCartoon(_:)), #selector(copyFigure(_:)):
             return figure != nil
+        case #selector(insertGridTable(_:)): return figure != nil && figure?.isTable == false
         case #selector(newFigure(_:)), #selector(exportAll(_:)), #selector(revealProject(_:)), #selector(showTerminal(_:)), #selector(newTerminal(_:)):
             return project != nil
         case #selector(saveCode(_:)): return code.dirty

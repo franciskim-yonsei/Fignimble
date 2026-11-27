@@ -29,6 +29,7 @@ Coordinates are millimeters from the figure's top-left corner, y down.
 | `posters` | | the poster presets (`name`, `size: [w, h]` mm, `body`, `min_font`, `title`, `heading`, `labels`, `margin`, `rank`) |
 | `poster_templates` | | `{templates: [{key, poster, landscape, name, use, size: [w, h]}]}`: the templates New Figure offers, in order, sized as hung |
 | `export_table` | `figure`, `oid`, `path`, `title?` | `{ok, path}`: a table element as a Word file |
+| `export_source_data` | `figure`, `path` | `{ok, path, sheets, panels: [{panel, sheet, how, blocks}]}`: the values plotted in each panel, as an .xlsx |
 | `remote_hosts` | | `{hosts}` from `~/.ssh/config` |
 | `remote_list` | `host`, `path?` | `{ok, host, path, entries: [{name, dir}]}`: folders and .py files there |
 | `import_remote` | `figure`, `host`, `path`, `x`, `y` | as `import_file`, plus `file`: the panel code copied into `panels/` |

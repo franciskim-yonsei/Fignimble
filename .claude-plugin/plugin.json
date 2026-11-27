@@ -1,0 +1,14 @@
+{
+  "name": "fignimble",
+  "version": "0.5.1",
+  "description": "Skills for Fignimble: build multi-panel figures from data or notebooks, make the paper's tables, restyle them for a journal, fix preflight, export, and make posters from a paper's figures.",
+  "author": {
+    "name": "Pachter Lab",
+    "url": "https://github.com/pachterlab"
+  },
+  "homepage": "https://pachterlab.github.io/Fignimble/",
+  "repository": "https://github.com/pachterlab/Fignimble",
+  "license": "BSD-2-Clause",
+  "keywords": ["figure", "matplotlib", "publication", "poster", "scientific"],
+  "skills": "./skills/"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "fignimble",
+  "version": "0.5.1",
+  "description": "Skills for Fignimble: build multi-panel figures from data or notebooks, restyle them for a journal, fix preflight, export, and make posters from a paper's figures.",
+  "author": {
+    "name": "Pachter Lab",
+    "url": "https://github.com/pachterlab"
+  },
+  "homepage": "https://pachterlab.github.io/Fignimble/",
+  "repository": "https://github.com/pachterlab/Fignimble",
+  "license": "BSD-2-Clause",
+  "keywords": ["figure", "matplotlib", "publication", "poster", "scientific"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Fignimble",
+    "shortDescription": "Publication figures and posters from Python",
+    "longDescription": "Build multi-panel figures from data or notebooks, make the paper's tables, restyle them for a journal, fix what preflight reports, export files that meet the journal's rules, and make posters from a paper's own figures.",
+    "developerName": "Pachter Lab",
+    "category": "Productivity",
+    "capabilities": ["Instructions"],
+    "websiteURL": "https://pachterlab.github.io/Fignimble/",
+    "defaultPrompt": [
+      "Make figure 2 from the CSVs in data/.",
+      "Make table 1 from data/de.csv and export it as a Word table.",
+      "Restyle my figures for Cell and fix what fignimble check reports.",
+      "Make an A0 poster from fig1 and fig2."
+    ]
+  }
+}

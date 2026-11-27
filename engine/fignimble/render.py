@@ -37,9 +37,12 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.figure import Figure as MplFigure  # noqa: E402
 
 import matplotlib.lines  # noqa: E402
-from . import api, journals, layout, qr, tables  # noqa: E402
-from .mirror import SKIP_DIRS  # noqa: E402
-from .srcedit import is_figure_source  # noqa: E402
+from . import api, journals, layout, officefonts, qr, tables  # noqa: E402
+# kept in modules without matplotlib, so that the SSH connection process need not load the renderer
+from .mirror import SKIP_DIRS, outside_stats  # noqa: E402,F401
+from .srcedit import is_figure_source, is_table_source  # noqa: E402,F401
+
+officefonts.install()          # Microsoft Office's fonts (Aptos, Aptos Display, Calibri, ...) for matplotlib
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 sys.dont_write_bytecode = True          # running a project's code leaves no __pycache__ in it
@@ -64,6 +67,35 @@ def rgb(c):
     if c is None:
         return None
     return tuple(mcolors.to_rgb(c))
+
+
+def table_rows(p: dict, project: Path) -> list:
+    """The cells of a table element: its rows=, the rows its function returns (a DataFrame becomes its column names
+    and values), or its file."""
+    if p.get("rows") is not None:
+        return p["rows"]
+    src = p["source"]
+    if callable(src):
+        got = src()
+        if hasattr(got, "columns") and hasattr(got, "values"):           # a pandas DataFrame
+            index = getattr(got, "index", None)
+            named = index is not None and any(n is not None for n in getattr(index, "names", []) or [])
+            if named:
+                got = got.reset_index()
+            return [[str(c) for c in got.columns]] + [[_cell_value(v) for v in r] for r in got.values.tolist()]
+        rows = [list(r) for r in got]
+        if not rows:
+            raise ValueError(f"{getattr(src, '__name__', 'the function')} returned no rows")
+        return rows
+    return tables.read_rows(project / src)
+
+
+def _cell_value(v):
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return ""
+    if hasattr(v, "item"):                                   # numpy scalars
+        v = v.item()
+    return v
 
 
 def run_isolated(path: Path) -> api.Figure:
@@ -130,6 +162,14 @@ class Piece:
     meta: dict = field(default_factory=dict)
 
 
+def _is_library(path: str) -> bool:
+    """A file of an installed package (or of Python itself), never reloaded or watched as the user's code."""
+    parts = Path(path).parts
+    if "site-packages" in parts or "dist-packages" in parts:
+        return True
+    return any(path.startswith(os.path.abspath(p) + os.sep) for p in {sys.prefix, sys.base_prefix, sys.exec_prefix})
+
+
 class Renderer:
     def __init__(self, project: str, cache: str | None = None):
         self.project = Path(project).resolve()
@@ -137,30 +177,74 @@ class Renderer:
         for d in ("pieces", "sprites", "out", "images"):
             (self.cache / d).mkdir(parents=True, exist_ok=True)
         self._docs: dict[str, pymupdf.Document] = {}
+        self.jobs, self.rc, self.nested = [], None, {}   # the last figure's panels, as pieces() drew them
         self._cwd = Path.cwd()                   # rendering moves into the project; relative paths mean this one
         self.dark = False
         self.raster_dpi = 600                    # what panels draw their rasters at (imshow, rasterized scatters)
         self._stack: list[Path] = []             # the figure files being drawn, outermost first (fig.figure nests)
         self.used: set[Path] = set()             # the files the last render read, for an export's provenance
-        self.source_data_panels: dict | None = None
+        # files outside the project that figures read (pictures, panel code and the modules it imports), by figure
+        # file: watched like the project's own, and kept on disk so that a fresh process knows them too
+        self._outside: dict[str, list[str]] = {}
+        try:
+            got = json.loads((self.cache / "outside.json").read_text(encoding="utf-8"))
+            self._outside = {k: [str(f) for f in v] for k, v in got.items() if isinstance(v, list)}
+        except (OSError, ValueError, AttributeError):
+            pass
 
     # --- running user code ---
 
+    def _outside_dirs(self) -> list[str]:
+        """The folders of code outside the project that panels run: modules imported from them are reloaded too."""
+        return sorted({os.path.dirname(f) for fs in self._outside.values() for f in fs if f.endswith(".py")})
+
     def _purge_modules(self):
-        root = os.path.normcase(str(self.project)) + os.sep
-        prefix = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
+        # case-folded on Windows; a module in a hidden or skipped folder (a venv inside the project) is a library
+        roots = [os.path.normcase(os.path.abspath(r)) + os.sep for r in [str(self.project)] + self._outside_dirs()]
         for name, mod in list(sys.modules.items()):
-            f = getattr(mod, "__file__", None)
-            if name == "__main__" or not f:
+            f = getattr(mod, "__file__", None) or ""
+            if name == "__main__" or not f or not os.path.isfile(f):
                 continue
-            location = os.path.normcase(os.path.abspath(f))
-            if not location.startswith(root) or (prefix.startswith(root) and location.startswith(prefix)):
+            f = os.path.abspath(f)
+            location = os.path.normcase(f)
+            root = next((r for r in roots if location.startswith(r)), None)
+            if root is None or _is_library(f):
                 continue
             folders = location[len(root):].split(os.sep)[:-1]
             if any(part.startswith(".") or part in SKIP_DIRS for part in folders):
                 continue
-            if os.path.isfile(f):
-                del sys.modules[name]
+            del sys.modules[name]
+
+    def outside_files(self, file=None) -> list[str]:
+        """Files outside the project that a figure (or, without `file`, any figure) read when last drawn."""
+        if file is not None:
+            return list(self._outside.get(str(Path(file).resolve()), []))
+        return sorted({f for fs in self._outside.values() for f in fs})
+
+    def _note_outside(self, file):
+        """After drawing `file`: the files outside the project it read, and the modules its outside code imported
+        from the folders that code is in."""
+        root = str(self.project) + os.sep
+        files = {str(f) for f in self.used if not str(f).startswith(root)}
+        dirs = {os.path.dirname(f) for f in files if f.endswith(".py")}
+        if dirs:
+            for mod in list(sys.modules.values()):
+                f = getattr(mod, "__file__", None) or ""
+                if f and f.endswith(".py"):
+                    f = os.path.abspath(f)
+                    if any(f.startswith(d + os.sep) for d in dirs) and not _is_library(f):
+                        files.add(f)
+        key, new = str(Path(file).resolve()), sorted(files)
+        if self._outside.get(key, []) == new:
+            return
+        if new:
+            self._outside[key] = new
+        else:
+            self._outside.pop(key, None)
+        try:
+            (self.cache / "outside.json").write_text(json.dumps(self._outside, indent=1), encoding="utf-8")
+        except OSError:
+            pass
 
     def _enter(self):
         os.chdir(self.project)
@@ -187,7 +271,8 @@ class Renderer:
         return api._FIGURES[0]
 
     def fingerprint(self) -> str:
-        """What a panel can read besides its own code: every other file of the project except figure files."""
+        """What a panel can read besides its own code: every other file of the project except figure files, and the
+        files outside the project that figures read (code a panel imports from there)."""
         items = []
         for dirpath, dirs, files in os.walk(self.project):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
@@ -204,7 +289,7 @@ class Renderer:
                 except OSError:
                     continue
                 items.append((str(p.relative_to(self.project)), st.st_mtime_ns, st.st_size))
-        return _h(sorted(items))
+        return _h(sorted(items), outside_stats(self.outside_files()))
 
     # --- pieces ---
 
@@ -239,6 +324,9 @@ class Renderer:
         if fn is not None:
             return fn
         self._enter()
+        here = str(Path(path).parent)
+        if not str(path).startswith(str(self.project) + os.sep) and here not in sys.path:
+            sys.path.insert(1, here)          # code kept with an analysis imports its neighbours, as when run there
         ns = runpy.run_path(str(path), run_name="__fignimble_panel__")
         fn = ns.get(props["function"])
         if not callable(fn):
@@ -556,9 +644,7 @@ class Renderer:
         self._stack.append(path)
         try:
             sp, sinfos, slabels = self.pieces(sub)
-            if self.source_data_panels is not None:
-                jobs, rc = self.source_data_panels[None]
-                self.source_data_panels[oid] = path.name, jobs, rc, slabels
+            self.nested[oid] = (path.name, self.jobs, self.rc, slabels)     # for source data
             said = self.preflight(sub, sp, sinfos, slabels)
         finally:
             self._stack.pop()
@@ -757,6 +843,9 @@ class Renderer:
             rasters[id(obj)] = pc.meta
             return pc
 
+        table_page = isinstance(fig, api.Table)
+        if table_page:
+            self._table_widths(fig, family)
         for i, e in enumerate(fig.elements):
             oid = str(i)
             p = e.props
@@ -838,9 +927,14 @@ class Renderer:
                 elif e.kind == "table":
                     size = p["size"] or style.size
                     fam = [p["font"]] + family if p["font"] else family
-                    if p.get("rows") is None:
+                    if p.get("rows") is None and callable(p["source"]):
+                        fn = inspect.unwrap(p["source"])               # through @cached
+                        info["code"] = {"file": inspect.getsourcefile(fn), "line": fn.__code__.co_firstlineno}
+                        info["props"]["source"] = None
+                        info["fromCode"] = getattr(fn, "__name__", "a function")
+                    elif p.get("rows") is None:
                         self.used.add(self.resolve(p["source"]))
-                    rows = p["rows"] if p.get("rows") is not None else tables.read_rows(self.resolve(p["source"]))
+                    rows = table_rows(p, self.project)
                     pdf, w, h = self.table_piece(rows, p["header"], size, fam, p["color"], p.get("w"),
                                                  p.get("decimals"), p.get("align"), p.get("grid", False))
                     box = (p["x"], p["y"], w, h)
@@ -888,6 +982,8 @@ class Renderer:
                     info["host"] = oids.get(id(host))
                     info["anchor"] = pc.meta["anchor"]
                     info["dest"] = [round(v, 4) for v in dests[id(host)]]
+                    info["pixelSize"] = round(pc.meta["pixel_size"], 6)
+                    info["pixelFrom"] = pc.meta["pixel_from"]
                     steps.append(pc)
                 elif e.kind == "bracket":
                     size = p["size"] or style.size
@@ -935,8 +1031,7 @@ class Renderer:
                 w, h = h, w                             # drawn upright, then turned into its box
             j["size"] = (w, h)
             j["base"] = self._panel_base(j["props"], w, h, rc, deps, j["collect"], j["background"])
-        if self.source_data_panels is not None:
-            self.source_data_panels[None] = jobs, rc
+        self.jobs, self.rc = jobs, rc                   # the panels and how they were drawn, for source data
         targets = _align_targets(jobs) if jobs else {}
         pieces = []
         for s_ in steps:
@@ -974,9 +1069,25 @@ class Renderer:
                 page.show_pdf_page(pymupdf.Rect(ox, oy, ox + w * MM, oy + h * MM), self._doc(pdf), 0,
                                    keep_proportion=False, rotate=-rot)
             pieces.append(Piece(oid, "panel", box, _h("p", pdf, rot), draw, meta={"pdf": pdf, "scale": 1.0}))
+        if table_page:
+            _stack_table(fig, pieces, infos)
         label_pieces, label_infos = self._labels(fig, panels, family)
         # labels are drawn above everything
         return pieces + label_pieces, infos, label_infos
+
+    def _table_widths(self, fig, family):
+        """A Table's title and notes wrap to the width of its cells (at least 60 mm)."""
+        cells = fig.cells.props
+        try:
+            fam = [cells["font"]] + family if cells["font"] else family
+            _, w, _ = self.table_piece(table_rows(cells, self.project), cells["header"],
+                                       cells["size"] or fig.style.size, fam, cells["color"], cells.get("w"),
+                                       cells.get("decimals"), cells.get("align"), cells.get("grid", False))
+        except Exception:                                  # noqa: BLE001  (the table's own step reports it)
+            w = 60.0
+        for e in fig.elements:
+            if e.props.get("role") in ("title", "notes"):
+                e.props["width"] = round(max(w, 60.0), 2)
 
     def _plan_layout(self, i, e, rc, deps, steps, infos, panels, boxes, oids, code_info, panel_job, style,
                      dests=None, rasters=None):
@@ -1068,10 +1179,32 @@ class Renderer:
         return Piece(oid, "zoom", box, key, draw, pad=p["width"] / MM), reg
 
     def _scalebar_piece(self, oid, p, dest, meta, family, style) -> Piece:
-        """A scale bar on a picture: its length from the picture's pixels and `pixel_size`."""
+        """A scale bar on a picture: its length from the picture's pixels and `pixel_size`, or, without one, the
+        pixel size in the picture's metadata. Preflight hears of a bar with neither, or one that disagrees."""
         pw = meta["px"][0]
         mm_per_px = dest[2] / pw
-        bar = p["length"] / p["pixel_size"] * mm_per_px
+        name = Path(meta["source"]).name
+        found = pixel_size_of(meta["source"])
+        per_unit = UNITS_M.get(_unit_key(p["unit"]))
+        from_meta = found[0] / per_unit if found and per_unit else None    # in the bar's unit
+        checks = []
+        px_size = p["pixel_size"]
+        if px_size is None and from_meta:
+            px_size, how = from_meta, f"from {name}'s {found[1]} metadata"
+        elif px_size is None:
+            px_size, how = 1.0, "not set"
+            checks.append({"level": "warning", "message": (
+                f"the pixel size isn't given and {name} has none in its metadata"
+                + ("" if per_unit else f" that converts to {p['unit']}")
+                + f", so the bar assumes one pixel is 1 {p['unit']}: give pixel_size= (from the microscope)")})
+        else:
+            how = "given"
+            if from_meta and abs(px_size - from_meta) > 0.01 * from_meta:
+                checks.append({"level": "warning", "message": (
+                    f"pixel_size={px_size:g} {p['unit']}, but {name}'s {found[1]} metadata says one pixel is "
+                    f"{from_meta:.4g} {p['unit']}; check which is right (a picture resized after it was taken "
+                    f"keeps metadata that no longer fits)")})
+        bar = p["length"] / px_size * mm_per_px
         size = p["size"] or style.size
         label = f"{p['length']:g} {p['unit']}"
         tpdf, tw, th = (self.text_piece(label, size, "bold", "normal", p["color"], 0, family, "center", keep_color=True)
@@ -1097,7 +1230,8 @@ class Renderer:
             if tpdf:
                 cx = x0 + bar / 2 * MM
                 self._show_pdf(tpdf, page, pymupdf.Rect(cx - tw / 2 * MM, oy, cx + tw / 2 * MM, oy + th * MM))
-        return Piece(oid, "scalebar", box, key, draw, meta={"size": size, "bar": bar, "anchor": [round(bx, 4), round(by, 4)]})
+        return Piece(oid, "scalebar", box, key, draw, meta={"size": size, "bar": bar, "anchor": [round(bx, 4), round(by, 4)],
+                                                            "pixel_size": px_size, "pixel_from": how, "checks": checks})
 
     def _labels(self, fig, panels, family):
         lab = fig.labels
@@ -1226,6 +1360,7 @@ class Renderer:
             return {"figure": name, "file": str(Path(file).resolve()), "error": _user_traceback(Path(file).name)}
         self._stack, self.used = [Path(file).resolve()], {Path(file).resolve()}
         pieces, infos, labels = self.pieces(fig)
+        self._note_outside(file)
         doc = self.compose(fig, pieces)
         out = self.cache / "out"
         page = doc[0]
@@ -1260,6 +1395,7 @@ class Renderer:
             "warnings": self.preflight(fig, pieces, infos, labels),
             "thumb": str(thumb),
             "pxPerMM": px_per_mm,
+            "outside": self.outside_files(file),
         }
 
     # --- checks ---
@@ -1282,6 +1418,8 @@ class Renderer:
                 return f"figure {Path(info['props']['source']).name}"
             if info and info["kind"] == "qr":
                 return "the QR code"
+            if info and info["kind"] == "scalebar":
+                return f"the scale bar on {who(info['host'])}" if info.get("host") else "a scale bar"
             return f"{info['kind'] if info else 'element'} {oid}"
 
         for info in infos:
@@ -1294,9 +1432,11 @@ class Renderer:
                 warn.append({"level": "error", "oid": info["oid"], "message": f"{who(info['oid'])} failed: {last}"})
         for pc in pieces:
             m = pc.meta
-            if pc.kind in ("text", "label", "bracket") and m.get("size", 99) < min_font - 1e-6:
+            if pc.kind in ("text", "label", "bracket", "table") and m.get("size", 99) < min_font - 1e-6:
                 warn.append({"level": "warning", "oid": pc.oid,
                              "message": f"{who(pc.oid)}: {m['size']:g} pt text is below the {min_font:g} pt minimum"})
+            for w_ in m.get("checks") or []:            # a piece's own findings (a scale bar's pixel size)
+                warn.append({**w_, "oid": pc.oid, "message": f"{who(pc.oid)}: {w_['message']}"})
             for w_ in m.get("nested") or []:            # from inside a figure placed whole
                 warn.append({**w_, "oid": pc.oid, "message": f"{who(pc.oid)}: {w_['message']}"})
             if m.get("pdf") and pc.kind in ("panel", "image", "figure"):
@@ -1310,6 +1450,16 @@ class Renderer:
                     warn.append({"level": "warning", "oid": pc.oid,
                                  "message": f"{who(pc.oid)}: text as small as {facts['min_size'] * s:.1f} pt "
                                             f"(minimum {min_font:g} pt)"})
+                if pc.oid in names and facts["letters"]:
+                    warn.append({"level": "warning", "oid": pc.oid,
+                                 "message": f"{who(pc.oid)}: has its own letter “{facts['letters'][0]}” drawn inside it "
+                                            f"as well; remove it from the panel's code or picture (Fignimble letters "
+                                            "the panels)"})
+                other = [f for f in facts["fonts"] if not _same_font(f, st.font)]
+                if other and st.font:
+                    warn.append({"level": "warning", "oid": pc.oid,
+                                 "message": f"{who(pc.oid)}: text in {_font_family(other[0])}, not the style's "
+                                            f"{st.font}; draw it in {st.font} so every panel matches"})
                 if facts["type3"]:
                     warn.append({"level": "warning", "oid": pc.oid,
                                  "message": f"{who(pc.oid)}: Type 3 font {facts['type3']}; journals want TrueType or "
@@ -1364,11 +1514,39 @@ class Renderer:
             if w_["oid"] is not None:
                 w_["message"] = who(w_["oid"]) + w_["message"][w_["message"].index(":"):]
             warn.append(w_)
+        boxes = [i for i in infos if i["kind"] in ("panel", "image", "figure", "table") and not i.get("hidden")
+                 and not isinstance(fig, api.Table)]
+        for k, a in enumerate(boxes):
+            for b in boxes[k + 1:]:
+                ax, ay, aw, ah = a["box"]
+                bx, by, bw, bh = b["box"]
+                ow, oh = min(ax + aw, bx + bw) - max(ax, bx), min(ay + ah, by + bh) - max(ay, by)
+                if ow > 0.5 and oh > 0.5:
+                    warn.append({"level": "warning", "oid": b["oid"],
+                                 "message": f"{who(a['oid'])} and {who(b['oid'])} overlap by {ow:.1f} x {oh:.1f} mm; "
+                                            "move one, or make the smaller an inset (fig.inset)"})
+        if labels:
+            for info in infos:
+                t = (info["props"].get("text") or "").strip().strip("*")
+                if info["kind"] == "text" and _LETTER.match(t):
+                    warn.append({"level": "warning", "oid": info["oid"],
+                                 "message": f"{who(info['oid'])} looks like a panel letter typed by hand; Fignimble "
+                                            "letters the panels (Labels in the style), so remove it"})
         seen = {}
         for l in labels:
             if l["text"] in seen:
                 warn.append({"level": "warning", "oid": l["oid"], "message": f"two panels are labeled {l['text']}"})
             seen[l["text"]] = 1
+        for info in infos:
+            if info["kind"] == "table" and info["props"].get("cells") and not info.get("hidden"):
+                warn += [{**w_, "oid": info["oid"]} for w_ in tables.check(info["props"]["cells"],
+                                                                           info["props"].get("header", True),
+                                                                           info["props"].get("decimals"))]
+        if isinstance(fig, api.Table):
+            if not any(i["props"].get("role") == "title" for i in infos):
+                warn.append({"level": "info", "oid": None,
+                             "message": "the table has no title; journals ask for one (Table(..., title=...))"})
+            return warn
         j = _journal_info(fig)
         if j and not j["fits"]:
             warn.append({"level": "info", "oid": None,
@@ -1385,7 +1563,14 @@ class Renderer:
             spans = [{**sp, "dir": ln.get("dir", (1, 0))} for b in page.get_text("dict").get("blocks", [])
                      for ln in b.get("lines", []) for sp in ln.get("spans", []) if sp.get("text", "").strip()]
             sizes = [sp["size"] for sp in spans if not _is_script(sp, spans)]
-            got = {"min_size": min(sizes) if sizes else None,
+            W, H = page.rect.width, page.rect.height
+            # a bold lone letter in the top-left corner: a panel letter the drawing makes itself
+            letters = [sp["text"].strip() for sp in spans
+                       if _LETTER.match(sp["text"].strip()) and (sp["flags"] & 16 or "bold" in sp["font"].lower())
+                       and sp["bbox"][0] < 0.15 * W and sp["bbox"][1] < 0.15 * H]
+            fonts = sorted({sp["font"].split("+")[-1] for sp in spans
+                            if re.search(r"[A-Za-z0-9]", sp["text"]) and not _SYMBOL_FONT.search(sp["font"])})
+            got = {"min_size": min(sizes) if sizes else None, "letters": letters, "fonts": fonts,
                    "type3": next((f[3] for f in page.get_fonts() if f[2] == "Type3"), None),
                    "images": [{"bbox": tuple(i["bbox"]), "width": i["width"]} for i in page.get_image_info()]}
             self._facts_cache[pdf] = got
@@ -1419,6 +1604,7 @@ class Renderer:
             raise ValueError("bleed and crop marks are for PDF, what print shops take")
         self._stack, self.used = [self.resolve(file)], {self.resolve(file)}
         pieces, infos, labels = self.pieces(fig)
+        self._note_outside(self.resolve(file))
         doc = self.compose(fig, pieces, bleed, marks)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if fmt == "png" and cmyk:
@@ -1843,6 +2029,27 @@ def _journal_info(fig):
     info = journals.JOURNALS[j]
     fits = any(abs(fig.width - w) < 0.6 for w in info["widths"].values())
     return {"key": j, "name": info["name"], "widths": info["widths"], "fits": fits}
+
+
+def _stack_table(fig, pieces, infos):
+    """A Table's page: its title, cells and notes one under the other, `pad` mm around them, the page their size."""
+    pad = float(fig.props.get("pad", 3))
+    by_oid = {pc.oid: pc for pc in pieces}
+    y, right, last_gap = pad, pad, 0.0
+    for info in infos:
+        role = info["props"].get("role")
+        if role is None or info.get("hidden"):
+            continue
+        w, h = info["box"][2], info["box"][3]
+        info["box"] = [round(pad, 4), round(y, 4), w, h]
+        pc = by_oid.get(info["oid"])
+        if pc is not None:
+            pc.box = (pad, y, pc.box[2], pc.box[3])
+        right = max(right, pad + w)
+        last_gap = 1.5 if role == "title" else 1.2
+        y += h + last_gap
+    fig.props["width"] = round(right + pad, 2)
+    fig.props["height"] = round(y - last_gap + pad, 2)
 
 
 def _jsonable(v):
@@ -2300,6 +2507,25 @@ def _css_decls(body: str) -> dict:
     return out
 
 
+_LETTER = re.compile(r"^\(?[A-Za-z]\)?\.?$")
+_SYMBOL_FONT = re.compile(r"symbol|dingbat|math|stix|^cm(sy|mi|ex|r)\d|^msam|^msbm", re.I)
+# metric-compatible stand-ins for one another: text set in any of them looks the same in print
+_SANS_CLONES = {"arial", "helvetica", "helveticaneue", "liberationsans", "nimbussans", "nimbussansl",
+                "texgyreheros", "arimo"}
+
+
+def _font_family(font: str) -> str:
+    """'ABCDEF+Arial-BoldMT' -> 'Arial'."""
+    f = re.split(r"[-,]", font.split("+")[-1])[0]
+    return re.sub(r"(PSMT|MT|PS)$", "", re.sub(r"(Bold|Italic|Oblique|Regular)+(MT)?$", "", f)) or f
+
+
+def _same_font(font: str, style_font: str | None) -> bool:
+    a = re.sub(r"[^a-z]", "", _font_family(font).lower())
+    b = re.sub(r"[^a-z]", "", (style_font or "").lower())
+    return not b or a.startswith(b) or b.startswith(a) or (a in _SANS_CLONES and b in _SANS_CLONES)
+
+
 def _is_script(span, spans) -> bool:
     """A superscript or subscript: matplotlib draws them at 0.7 of the text before them with the baseline raised or
     lowered, so Agg$^{+}$'s "+" at 4.9 pt beside 7 pt is not small text the way a 4.9 pt label is. Measured along
@@ -2329,7 +2555,8 @@ def _math_rc(family) -> dict:
         from matplotlib import font_manager
         try:
             path = font_manager.findfont(font_manager.FontProperties(family=list(family)), fallback_to_default=True)
-            name = font_manager.get_font(path).family_name
+            # the name matplotlib knows it by: Aptos Display's files say "Aptos" (see officefonts.py)
+            name = officefonts.family_of(path) or font_manager.get_font(path).family_name
         except Exception:                                # noqa: BLE001
             name = "DejaVu Sans"
         _FONT_NAMES[key] = name
@@ -2733,11 +2960,62 @@ def _measure_marks(fig, h) -> list:
     return out[:600]
 
 
+# a picture's pixel size, for scale bars: lengths in metres
+UNITS_M = {"m": 1.0, "cm": 1e-2, "mm": 1e-3, "µm": 1e-6, "nm": 1e-9, "Å": 1e-10, "pm": 1e-12, "in": 0.0254}
+_UNIT_NAMES = {"um": "µm", "μm": "µm", "micron": "µm", "microns": "µm", "micrometer": "µm", "micrometre": "µm",
+               "\\u00b5m": "µm", "nanometer": "nm", "nanometre": "nm", "millimeter": "mm", "millimetre": "mm",
+               "centimeter": "cm", "centimetre": "cm", "meter": "m", "metre": "m", "a": "Å", "angstrom": "Å",
+               "ångström": "Å", "inch": "in"}
+
+
+def _unit_key(unit: str) -> str:
+    u = (unit or "").strip()
+    return _UNIT_NAMES.get(u.lower(), u.replace("μ", "µ")) if u not in UNITS_M else u
+
+
+def pixel_size_of(path) -> tuple[float, str] | None:
+    """The size of one pixel of a picture, in metres, from its metadata, and where it came from: an OME-TIFF's
+    PhysicalSizeX, an ImageJ TIFF's resolution and unit, or a TIFF, PNG or JPEG resolution too fine to be a print
+    resolution (pixels under 2.5 µm; 300 dpi is a print resolution, not the size of what was imaged). None if none."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            tags = getattr(im, "tag_v2", None) or {}
+            desc = tags.get(270) or ""
+            if isinstance(desc, bytes):
+                desc = desc.decode("utf-8", "replace")
+            if "PhysicalSizeX=" in desc:                     # OME-XML
+                m = re.search(r'PhysicalSizeX="([0-9.eE+-]+)"', desc)
+                u = re.search(r'PhysicalSizeXUnit="([^"]+)"', desc)
+                f = UNITS_M.get(_unit_key(u.group(1) if u else "µm"))
+                if m and f and float(m.group(1)) > 0:
+                    return float(m.group(1)) * f, "OME-TIFF"
+            xres = tags.get(282)
+            xres = float(xres) if xres else 0.0
+            if desc.startswith("ImageJ=") and xres > 0:
+                u = re.search(r"^unit=(.+)$", desc, re.M)
+                f = UNITS_M.get(_unit_key(u.group(1).strip() if u else ""))
+                if f:
+                    return f / xres, "ImageJ"
+            per_m = 0.0
+            if xres > 0 and tags.get(296) in (2, 3):         # ResolutionUnit: inch, centimetre
+                per_m = xres / (0.0254 if tags.get(296) == 2 else 0.01)
+            elif im.format in ("PNG", "JPEG") and im.info.get("dpi"):
+                per_m = float(im.info["dpi"][0]) / 0.0254
+            if per_m > 1 / 2.5e-6:
+                return 1 / per_m, f"{im.format} resolution"
+    except Exception:                                        # noqa: BLE001
+        return None
+    return None
+
+
 # color vision deficiencies (Machado et al. 2009, severity 1), applied in linear RGB
 _CVD = {
     "deuteranopia": ((0.367322, 0.860646, -0.227968), (0.280085, 0.672501, 0.047413), (-0.011820, 0.042940, 0.968881)),
     "protanopia": ((0.152286, 1.052583, -0.204868), (0.114503, 0.786281, 0.099216), (-0.003882, -0.048116, 1.051998)),
     "tritanopia": ((1.255528, -0.076749, -0.178779), (-0.078411, 0.930809, 0.147602), (0.004733, 0.691367, 0.303900)),
+    # printed in black and white: the luminance, as the View menu's grayscale preview shows it
+    "grayscale": ((0.2126, 0.7152, 0.0722), (0.2126, 0.7152, 0.0722), (0.2126, 0.7152, 0.0722)),
 }
 
 
@@ -2771,7 +3049,8 @@ def _colorful(c: str) -> bool:
 
 
 def _clashes(colors) -> list:
-    """Pairs of colors that most people tell apart but some can't: [(a, b, [deficiencies])]."""
+    """Pairs of colors that most people tell apart but some can't, or that print alike in grayscale:
+    [(a, b, [deficiencies, and "grayscale"])]."""
     cs = sorted({c.upper() for c in colors if c and _colorful(c)})
     out = []
     for i, a in enumerate(cs):
@@ -2786,19 +3065,33 @@ def _clashes(colors) -> list:
 
 
 def _color_vision(infos, fig) -> list:
-    """Preflight: colors in a panel (or among the annotations) that look alike to color-blind readers."""
+    """Preflight: colors in a panel (or among the annotations) that look alike to color-blind readers (a warning),
+    or only when printed in grayscale (a note: many color-blind-safe palettes have colors of the same lightness)."""
+    def seen(kinds):
+        cvd = [k for k in kinds if k != "grayscale"]
+        return cvd, (", ".join(cvd) + (" and in grayscale" if "grayscale" in kinds else "")) if cvd else "in grayscale"
+
     warn = []
     for info in infos:
         marks = info.get("marks") or []
         if not marks:
             continue
-        for a, b, kinds in _clashes(m["color"] for m in marks)[:3]:
-            warn.append({"level": "warning", "oid": info["oid"], "colors": [a, b],
-                         "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike with "
-                                    f"{', '.join(kinds)}; use a color-blind-safe palette or tell them apart another way"})
+        clashes = sorted(_clashes(m["color"] for m in marks), key=lambda c: c[2] == ["grayscale"])
+        for a, b, kinds in clashes[:3]:
+            cvd, how = seen(kinds)
+            if cvd:
+                warn.append({"level": "warning", "oid": info["oid"], "colors": [a, b],
+                             "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike with {how}; use a "
+                                        f"color-blind-safe palette or tell them apart another way"})
+            else:
+                warn.append({"level": "info", "oid": info["oid"], "colors": [a, b],
+                             "message": f"{info.get('kind')} {info['oid']}: {a} and {b} look alike in grayscale; if "
+                                        f"the figure may be printed in black and white, tell them apart another way "
+                                        f"(lightness, markers, line styles or labels)"})
     notes = [e["props"].get(k) for e in infos if e["kind"] in ("text", "line", "rect", "ellipse", "path", "bracket")
              for k in ("color", "stroke", "fill") if isinstance(e["props"].get(k), str)]
-    for a, b, kinds in _clashes(notes)[:3]:
-        warn.append({"level": "warning", "oid": None, "colors": [a, b],
-                     "message": f"annotations in {a} and {b} look alike with {', '.join(kinds)}"})
+    for a, b, kinds in sorted(_clashes(notes), key=lambda c: c[2] == ["grayscale"])[:3]:
+        cvd, how = seen(kinds)
+        warn.append({"level": "warning" if cvd else "info", "oid": None, "colors": [a, b],
+                     "message": f"annotations in {a} and {b} look alike {'with ' if cvd else ''}{how}"})
     return warn

@@ -78,8 +78,9 @@ can [open the project there](guide/remote.md): the server draws the panels and t
 
     ---
 
-    40 journal presets set widths, fonts, panel labels and resolutions. Preflight checks the figure; export writes
-    PDF, EPS, SVG, TIFF, PNG, JPEG or PowerPoint that meet the journal's rules, and tables as Word or Excel.
+    71 journal presets, biology's, chemistry's and materials science's, set widths, fonts, panel labels and
+    resolutions. Preflight checks the figure; export writes PDF, EPS, SVG, TIFF, PNG, JPEG or PowerPoint that meet
+    the journal's rules, tables as Word or Excel, and the plotted values as a source data spreadsheet.
 
     [:octicons-arrow-right-24: Preflight and export](guide/export.md)
 

@@ -1,10 +1,12 @@
 import AppKit
 
-/// The left sidebar: the project's figures (with thumbnails), and the layers of the figure on screen, topmost first.
-final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate {
+/// The left sidebar: the project's figures and, under their own heading, its tables (with thumbnails), and the
+/// layers of the figure on screen, topmost first.
+final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     weak var main: MainController?
     private let figuresTable = NSTableView()
     private let layersTable = NSTableView()
+    /// The figures, then a "Tables" heading and the tables: a heading row is ["heading": title].
     private var figures: [[String: Any]] = []
     private var layers: [Element] = []
     private var updating = false
@@ -24,6 +26,7 @@ final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate {
             t.allowsMultipleSelection = t === layersTable
         }
         figuresTable.rowHeight = 92
+        figuresTable.menu = NSMenu(); figuresTable.menu?.delegate = self     // right-click: cut, copy, paste, delete, new
         layersTable.rowHeight = 22
         layersTable.target = self; layersTable.doubleAction = #selector(layerDoubleClicked)
         split.translatesAutoresizingMaskIntoConstraints = false
@@ -63,12 +66,27 @@ final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate {
         main?.showCode(of: layers[r])
     }
 
-    func setFigures(_ f: [[String: Any]], current: String?) {
+    /// The right-click menu of the figures list: for the figure or table clicked, or the list's empty space.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let r = figuresTable.clickedRow
+        let name = r >= 0 && r < figures.count ? figures[r]["name"] as? String : nil
+        guard let built = main?.figureListMenu(name) else { return }
+        menu.autoenablesItems = false
+        for i in built.items { built.removeItem(i); menu.addItem(i) }
+    }
+
+    func setFigures(_ all: [[String: Any]], current: String?) {
+        let isTable = { (x: [String: Any]) in x["kind"] as? String == "table" }
+        let tables = all.filter(isTable)
+        var f = all.filter { !isTable($0) }
+        if !tables.isEmpty { f += [["heading": "Tables"]] + tables }
         figures = f
         updating = true
         figuresTable.reloadData()
         if let c = current, let i = f.firstIndex(where: { $0["name"] as? String == c }) {
             figuresTable.selectRowIndexes([i], byExtendingSelection: false)
+            figuresTable.scrollRowToVisible(i)
         }
         updating = false
     }
@@ -94,6 +112,14 @@ final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func tableView(_ t: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
         if t === figuresTable {
             let f = figures[row]
+            if let h = f["heading"] as? String {
+                let v = NSTableCellView()
+                let l = sectionLabel(h)
+                l.translatesAutoresizingMaskIntoConstraints = false; v.addSubview(l)
+                NSLayoutConstraint.activate([l.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 12),
+                                             l.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -2)])
+                return v
+            }
             let v = NSTableCellView()
             let img = NSImageView()
             img.imageScaling = .scaleProportionallyUpOrDown
@@ -140,6 +166,11 @@ final class Navigator: NSView, NSTableViewDataSource, NSTableViewDelegate {
         ])
         return v
     }
+
+    func tableView(_ t: NSTableView, heightOfRow row: Int) -> CGFloat {
+        t === figuresTable ? (figures[row]["heading"] != nil ? 26 : 92) : 22
+    }
+    func tableView(_ t: NSTableView, shouldSelectRow row: Int) -> Bool { t !== figuresTable || figures[row]["heading"] == nil }
 
     /// Thumbnails are re-read when their file changes.
     private func thumb(_ path: String) -> NSImage? {
