@@ -53,9 +53,9 @@ public partial class MainWindow
                 .Select(dir => Path.Combine(dir, "python.exe")).FirstOrDefault(File.Exists);
             if (pathPython is not null)
             {
-                var report = await RunPythonTool<PackageReport>(pathPython, folder, null);
-                launcherPython = report.Python;
-                return report;
+                var onPath = await RunPythonTool<PackageReport>(pathPython, folder, null);
+                launcherPython = onPath.Python;
+                return onPath;
             }
         }
         catch (Exception ex)
