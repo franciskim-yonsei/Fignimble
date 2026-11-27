@@ -1,0 +1,47 @@
+name: Build Windows preview
+
+on:
+  push:
+    tags: ["windows-preview-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and verify the portable ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'Fignimble-Windows-x64.zip'
+          .\apps\windows\package.ps1 -Output $zip
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $files = $archive.Entries.FullName -replace '\\', '/'
+            foreach ($required in @('Fignimble/Fignimble.exe', 'Fignimble/coreclr.dll', 'Fignimble/engine/fignimble/rpc.py', 'Fignimble/setup-python.ps1')) {
+              if ($required -notin $files) { throw "Missing from ZIP: $required" }
+            }
+          } finally {
+            $archive.Dispose()
+          }
+          Get-FileHash -Algorithm SHA256 $zip
+
+      - name: Upload ZIP to the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $draft = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json isDraft --jq .isDraft
+          if ($LASTEXITCODE -ne 0 -or $draft -ne 'true') { throw 'Create a draft release for this preview tag before building.' }
+          $zip = Join-Path $env:RUNNER_TEMP 'Fignimble-Windows-x64.zip'
+          gh release upload $env:GITHUB_REF_NAME $zip --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'The ZIP could not be uploaded.' }
