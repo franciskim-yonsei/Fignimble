@@ -50,6 +50,8 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
     /// What the last remote project's Python lacked (the tunnel's needs_packages event), for openRemote.
     private var remoteNeeds: [String: Any]?
     private var engineFor: RemoteProject?
+    /// The engine started answered its first request; before that, its stopping means its Python can't run it.
+    private var engineAnswered = false
     private var queue: Task<Void, Never>?
     private var nudgeTotal = CGPoint.zero
     private var nudgeWork: DispatchWorkItem?
@@ -248,17 +250,22 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
             TerminalSession.python = py
             do { try engine.start(python: py) } catch { alert("Couldn't start the engine", error.localizedDescription); return }
             engineFor = nil
+            engineAnswered = false
             engine.onEvent = { [weak self] e in self?.event(e) }
             engine.onExit = { [weak self] code in
                 guard let self else { return }
                 if self.engineFor != nil && self.remote == nil { return }      // still connecting: openRemote says why
                 if let r = self.remote { self.connectionLost(r); return }
+                if !self.engineAnswered { self.engineWontStart(py, code: code, then: url); return }
                 self.alert("The Fignimble engine stopped", "Exit status \(code). The end of its log (~/Library/Logs/fignimble.log):\n\n" + Engine.logTail())
             }
-            if let j = try? await engine.json("journals") { journals = j.compactMapValues { $0 as? [String: Any] } }
+            runShotsIfAsked()                           // its scenes wait for what they need
+            let j = try? await engine.json("journals")
+            guard engine.isRunning else { return }      // stopped before answering: onExit offers another Python
+            engineAnswered = true
+            if let j { journals = j.compactMapValues { $0 as? [String: Any] } }
             if let p = try? await engine.json("posters") { posters = p.compactMapValues { $0 as? [String: Any] } }
             if let t = try? await engine.json("poster_templates") { posterTemplates = t["templates"] as? [[String: Any]] ?? [] }
-            runShotsIfAsked()
             // a project only when one was opened with the app (a figure file or folder double-clicked, dropped on
             // its icon, or given on the command line); otherwise it starts empty: File ▸ Open Recent has the last ones
             if let u = url { openProject(at: u) }
@@ -266,11 +273,22 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
         }
     }
 
+    /// The engine ended before its first answer: that Python passes the import check but can't run it (an ipython,
+    /// a wrapper that doesn't pass on its input, ...). It is forgotten if it was the one chosen, so the next launch
+    /// doesn't try it again, and the choice of a Python is offered.
+    private func engineWontStart(_ py: String, code: Int32, then url: URL?) {
+        if UserDefaults.standard.string(forKey: "python") == py { UserDefaults.standard.removeObject(forKey: "python") }
+        let tail = Engine.logTail(6)
+        missingPython(then: url, because: "\(py) passed the check for matplotlib, pymupdf, pillow and numpy, but the Fignimble engine stopped as it started (exit status \(code))."
+                      + (tail.isEmpty ? "" : " The end of its log (~/Library/Logs/fignimble.log):\n\n" + tail))
+    }
+
     /// No Python that can render: offer to set one up (setup_python.sh, a minute or two), or to choose one.
-    private func missingPython(then url: URL?) {
+    /// `because`: why the Python found can't be used, said first.
+    private func missingPython(then url: URL?, because: String? = nil) {
         let a = NSAlert()
-        a.messageText = "Fignimble needs to set up Python"
-        a.informativeText = "Fignimble draws figures with Python (matplotlib and PyMuPDF). Set Up Python downloads Python 3.11 and those packages into ~/Library/Application Support/Fignimble (about 260 MB, usually under a minute). Nothing else on your Mac changes and no password is needed.\n\nOr choose a Python of your own that has matplotlib, pymupdf, pillow and numpy installed."
+        a.messageText = because == nil ? "Fignimble needs to set up Python" : "That Python can't run Fignimble"
+        a.informativeText = (because.map { $0 + "\n\n" } ?? "") + "Fignimble draws figures with Python (matplotlib and PyMuPDF). Set Up Python downloads Python 3.11 and those packages into ~/Library/Application Support/Fignimble (about 260 MB, usually under a minute). Nothing else on your Mac changes and no password is needed.\n\nOr choose a Python of your own (3.10 or later) that has matplotlib, pymupdf, pillow and numpy installed."
         a.addButton(withTitle: "Set Up Python")
         a.addButton(withTitle: "Choose a Python…")
         a.addButton(withTitle: "Quit")
@@ -287,7 +305,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
                     self.start(open: url)
                 } else {
                     self.alert("Python was set up but can't draw figures",
-                               "\(PythonSetup.python) can't import matplotlib, pymupdf and PIL. The log is ~/Library/Logs/fignimble.log.")
+                               "\(PythonSetup.python) isn't Python 3.10 or later with matplotlib, pymupdf, pillow and numpy. The log is ~/Library/Logs/fignimble.log.")
                 }
             }
         case .alertSecondButtonReturn:
@@ -299,7 +317,7 @@ final class MainController: NSObject, NSWindowDelegate, NSMenuItemValidation {
                     UserDefaults.standard.set(u.path, forKey: "python")
                     start(open: url)
                 } else {
-                    let b = NSAlert(); b.messageText = "That Python can't import matplotlib, pymupdf and PIL"
+                    let b = NSAlert(); b.messageText = "That isn't Python 3.10 or later with matplotlib, pymupdf, pillow and numpy"
                     b.informativeText = u.path; b.runModal()
                     missingPython(then: url)
                 }

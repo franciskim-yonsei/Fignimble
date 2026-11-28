@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static func main() {
         // run by ssh as its SSH_ASKPASS program: one question in a dialog, then exit (SSHLogin.swift)
         if ProcessInfo.processInfo.environment["FIGNIMBLE_ASKPASS"] != nil { SSH.askpassMain() }
+        // writing to an engine that has just exited raises SIGPIPE, which would end the app: the write throws instead
+        signal(SIGPIPE, SIG_IGN)
         let app = NSApplication.shared
         let d = AppDelegate()
         app.delegate = d

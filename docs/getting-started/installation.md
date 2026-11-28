@@ -19,8 +19,9 @@ Pillow. If it finds none, it offers two choices:
     administrator password, and changes nothing else on your Mac.
 
 **Choose a Python…**
-:   Uses a Python of your own, such as a conda or venv environment, that has the packages installed:
-    `pip install matplotlib "pymupdf<2" pillow numpy`.
+:   Uses a Python of your own (3.10 or later), such as a conda or venv environment, that has the packages installed:
+    `pip install matplotlib "pymupdf<2" pillow numpy`. Pick the environment's `python3` itself (for example
+    `…/envs/myenv/bin/python3`), not `ipython` or a wrapper script.
 
 ### Packages your panels need
 
